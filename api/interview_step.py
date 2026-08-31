@@ -44,5 +44,4 @@ class handler(VercelHandler):
             })
 
         except Exception as e:
-            return self.json_//Response error logic
             return self.json_response({"detail": str(e)}, 500)

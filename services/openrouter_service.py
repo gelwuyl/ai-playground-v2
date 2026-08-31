@@ -72,14 +72,17 @@ def _post_with_retry(payload: dict) -> httpx.Response:
     raise RuntimeError("Failed after maximum retries due to rate limits.")
 
 
-def call_openrouter(prompt: str, system_prompt: str | None = None) -> str:
-    """Send a prompt to OpenRouter and return the text response."""
+def call_openrouter(prompt: str, system_prompt: str | None = None, model: str | None = None) -> str:
+    """Send a prompt to OpenRouter and return the text response.
+
+    `model` overrides OPENROUTER_MODEL for this call (OpenRouter model id).
+    """
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    resp = _post_with_retry({"model": OPENROUTER_MODEL, "messages": messages})
+    resp = _post_with_retry({"model": model or OPENROUTER_MODEL, "messages": messages})
     return resp.json()["choices"][0]["message"]["content"]
 
 
@@ -92,12 +95,13 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def call_openrouter_json(prompt: str, system_prompt: str | None, schema: dict) -> dict:
+def call_openrouter_json(prompt: str, system_prompt: str | None, schema: dict, model: str | None = None) -> dict:
     """Call OpenRouter and request a JSON object matching `schema`.
 
     Uses response_format json_object where supported, plus fence-stripping
     and retry up to 3x on parse failure.
     Raises ValueError if a valid JSON object cannot be obtained.
+    `model` overrides OPENROUTER_MODEL for this call (OpenRouter model id).
     """
     messages = []
     if system_prompt:
@@ -105,7 +109,7 @@ def call_openrouter_json(prompt: str, system_prompt: str | None, schema: dict) -
     messages.append({"role": "user", "content": prompt})
 
     body = {
-        "model": OPENROUTER_MODEL,
+        "model": model or OPENROUTER_MODEL,
         "messages": messages,
         "response_format": {"type": "json_object"},
     }

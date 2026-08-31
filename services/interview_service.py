@@ -1,62 +1,48 @@
+"""Mr. Brave — three-stage interview preparation pipeline.
+
+Each stage is one agent persona (system prompt) plus one OpenRouter call,
+persisted to Postgres. Originally written against the crewAI framework, but
+crewAI's dependency stack (chromadb, onnxruntime, litellm, kubernetes client)
+pushes the Vercel serverless bundle past its 500 MB limit, so the crew is
+orchestrated directly here: Prospector -> Researcher -> Writer, one stage per
+/api/interview_step call.
+"""
 import os
-import json
 import uuid
-from typing import List, Dict, Any, Optional
-from crewai import Agent, Task, Crew, Process, LLM
+from typing import Any, Dict
+
 from services.database import get_conn
+from services.openrouter_service import call_openrouter, call_openrouter_json
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 
-# We use LiteLLM naming convention for CrewAI LLMs.
-# These environment variables should be set in Vercel/local .env
-# OPENROUTER_API_KEY or GOOGLE_API_KEY
-PROSPECTOR_MODEL = os.environ.get("INTERVIEW_PROSPECTOR_MODEL", "gemini-1.5-flash")
-RESEARCHER_MODEL = os.environ.get("INTERVIEW_RESEARCHER_MODEL", "gemini-1.5-pro")
-WRITER_MODEL = os.environ.get("INTERVIEW_WRITER_MODEL", "gemini-1.5-pro")
-
-# Initialize LLMs
-prospector_llm = LLM(model=PROSPECTOR_MODEL)
-researcher_llm = LLM(model=RESEARCHER_MODEL)
-writer_llm = LLM(model=WRITER_MODEL)
+# OpenRouter model ids per stage. (The crewAI version used LiteLLM-style
+# "gemini-1.5-*" names, which are not valid OpenRouter ids.) Overridable via
+# environment variables in Vercel/local .env.
+PROSPECTOR_MODEL = os.environ.get("INTERVIEW_PROSPECTOR_MODEL", "google/gemini-2.5-flash")
+RESEARCHER_MODEL = os.environ.get("INTERVIEW_RESEARCHER_MODEL", "google/gemini-2.5-pro")
+WRITER_MODEL = os.environ.get("INTERVIEW_WRITER_MODEL", "google/gemini-2.5-pro")
 
 # ==============================================================================
-# AGENT DEFINITIONS
+# AGENT PERSONAS (former crewAI role/goal/backstory, kept as system prompts)
 # ==============================================================================
 
-def create_prospector():
-    return Agent(
-        role='Company Directory Prospector',
-        goal='Extract specific job roles and requirements from target company directories and career pages.',
-        backstory="""You are an expert scout. You excel at navigating corporate career portals
-        and LinkedIn to identify open roles that match a specific professional profile.""",
-        llm=prospector_llm,
-        verbose=True,
-        allow_delegation=False
-    )
+PROSPECTOR_SYSTEM = """You are the Company Directory Prospector — an expert scout. You excel at
+navigating corporate career portals and LinkedIn to identify open roles that match a specific
+professional profile. Extract specific job roles and requirements from the target company
+directories and career pages the user gives you."""
 
-def create_researcher():
-    return Agent(
-        role='Interview Strategist',
-        goal='Analyze job roles to predict the most likely technical and behavioral interview questions.',
-        backstory="""You are a seasoned recruiter and industry analyst. You can look at a job
-        description and immediately identify the "gotcha" questions and the core competencies.""",
-        llm=researcher_llm,
-        verbose=True,
-        allow_delegation=False
-    )
+RESEARCHER_SYSTEM = """You are the Interview Strategist — a seasoned recruiter and industry analyst.
+You can look at a job description and immediately identify the "gotcha" questions and the core
+competencies. Analyze job roles to predict the most likely technical and behavioral interview
+questions."""
 
-def create_writer():
-    return Agent(
-        role='Professional Communications Expert',
-        goal='Draft high-impact interview responses based on the user\'s resume and critique them.',
-        backstory="""You are a communications coach for C-suite executives. You know how to
-        frame professional experience using the STAR method (Situation, Task, Action, Result).""",
-        llm=writer_llm,
-        verbose=True,
-        allow_delegation=False
-    )
+WRITER_SYSTEM = """You are the Professional Communications Expert — a communications coach for
+C-suite executives. You know how to frame professional experience using the STAR method
+(Situation, Task, Action, Result). Draft high-impact interview responses based on the user's
+resume and critique them."""
 
 # ==============================================================================
 # SERVICE LOGIC
@@ -86,22 +72,25 @@ class InterviewService:
                 if not session: raise ValueError("Session not found")
                 target_role, target_companies = session
 
-        agent = create_prospector()
-        task = Task(
-            description=f"Search for open roles at {target_companies} that match the profile of a {target_role}. Extract job title, responsibilities, and skills.",
-            expected_output="A structured list of roles in JSON format: [{'company': '...', 'title': '...', 'responsibilities': '...', 'skills': '...'}]",
-            agent=agent
+        prompt = (
+            f"Search for open roles at {target_companies} that match the profile of a {target_role}. "
+            "Extract job title, responsibilities, and skills.\n\n"
+            'Return JSON: {"roles": [{"company": "...", "title": "...", "responsibilities": "...", "skills": "..."}]}'
         )
-
-        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
-        result = crew.kickoff()
-
-        # Parse result and save to DB
         try:
-            roles_data = json.loads(result.raw)
-        except:
-            # Fallback if the LLM doesn't return perfect JSON
-            roles_data = [{"company": "Unknown", "title": "Unknown", "responsibilities": result.raw, "skills": "Unknown"}]
+            data = call_openrouter_json(prompt, PROSPECTOR_SYSTEM, schema={}, model=PROSPECTOR_MODEL)
+            if isinstance(data, list):
+                roles_data = data
+            elif isinstance(data, dict):
+                roles_data = data.get("roles") or []
+            else:
+                roles_data = []
+            roles_data = [r for r in roles_data if isinstance(r, dict)]
+        except ValueError:
+            # Fallback if the model doesn't return parseable JSON
+            roles_data = [{"company": "Unknown", "title": "Unknown",
+                           "responsibilities": "The model did not return structured role data. Retry this stage.",
+                           "skills": "Unknown"}]
 
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -127,27 +116,27 @@ class InterviewService:
         # Prepare context for the researcher
         roles_context = "\n".join([f"Company: {r[0]}, Role: {r[1]}, Req: {r[2]}, Skills: {r[3]}" for r in roles])
 
-        agent = create_researcher()
-        task = Task(
-            description=f"Based on these roles:\n{roles_context}\nGenerate a list of the most likely interview questions. Include technical and behavioral questions.",
-            expected_output="A structured list of questions in JSON format: [{'role_id': '...', 'question': '...', 'type': '...'}]",
-            agent=agent
+        prompt = (
+            f"Based on these roles:\n{roles_context}\n"
+            "Generate a list of the most likely interview questions. Include technical and behavioral questions.\n\n"
+            'Return JSON: {"questions": [{"question": "...", "type": "technical|behavioral"}]}'
         )
-
-        # Note: In a real scenario, we'd need the role_id for the mapping.
-        # For simplicity, we'll map them back based on company/title.
-        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
-        result = crew.kickoff()
-
         try:
-            questions_data = json.loads(result.raw)
-        except:
-            questions_data = [{"question": result.raw, "type": "general"}]
+            data = call_openrouter_json(prompt, RESEARCHER_SYSTEM, schema={}, model=RESEARCHER_MODEL)
+            if isinstance(data, list):
+                questions_data = data
+            elif isinstance(data, dict):
+                questions_data = data.get("questions") or []
+            else:
+                questions_data = []
+            questions_data = [q for q in questions_data if isinstance(q, dict) and q.get("question")]
+        except ValueError:
+            questions_data = [{"question": "Model did not return structured questions. Retry this stage.", "type": "general"}]
 
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # Simple mapping: find the first role that matches the question context
-                # This is a simplified version; in production, we'd make the agent return the role_id.
+                # Simple mapping: distribute questions across the session's roles
+                # round-robin. In production, we'd make the agent return the role_id.
                 cur.execute("SELECT role_id FROM interview_prep_roles WHERE session_id = %s", (session_id,))
                 all_role_ids = [r[0] for r in cur.fetchall()]
 
@@ -180,23 +169,20 @@ class InterviewService:
 
         context = "\n".join([f"Company: {p[0]}, Role: {p[1]}, Question: {p[2]}" for p in qa_pairs])
 
-        agent = create_writer()
-        task = Task(
-            description=f"User Resume: {resume}\n\nQuestions:\n{context}\n\nDraft high-impact STAR responses for each. Add a 'Critic's Note' for each.",
-            expected_output="A professional interview guide in Markdown format.",
-            agent=agent
+        prompt = (
+            f"User Resume:\n{resume}\n\nQuestions:\n{context}\n\n"
+            "Draft high-impact STAR responses for each. Add a 'Critic's Note' for each. "
+            "Return the guide in Markdown format."
         )
-
-        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
-        result = crew.kickoff()
+        guide = call_openrouter(prompt, WRITER_SYSTEM)
 
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("UPDATE interview_prep_sessions SET final_guide = %s, current_stage = 'completed' WHERE session_id = %s",
-                            (result.raw, session_id))
+                            (guide, session_id))
             conn.commit()
 
-        return {"status": "completed", "guide": result.raw}
+        return {"status": "completed", "guide": guide}
 
     @staticmethod
     def delete_session(session_id: str):

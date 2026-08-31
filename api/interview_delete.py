@@ -11,7 +11,6 @@ class handler(VercelHandler):
 
         session_id = (body.get("session_id") or "").strip()
         if not session_id:
-            return self.json_//Response error logic
             return self.json_response({"detail": "Missing session_id."}, 400)
 
         InterviewService.delete_session(session_id)
