@@ -87,19 +87,43 @@ def call_openrouter(prompt: str, system_prompt: str | None = None, model: str | 
 
 
 def _strip_fences(text: str) -> str:
-    """Remove markdown code fences (```json ... ```) if the model wrapped its JSON."""
+    """Extract the JSON payload from a model response.
+
+    Handles bare JSON, a leading fenced block (```json ... ```), a fenced
+    block preceded by prose, and prose around a bare JSON object/array.
+    """
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
-    return text.strip()
+        return text.strip()
+
+    # Fenced block somewhere after prose
+    m = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Bare JSON possibly wrapped in prose: outermost {...} or [...], chosen
+    # by whichever opener appears first in the text.
+    spans = []
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = text.find(opener)
+        end = text.rfind(closer)
+        if start != -1 and end > start:
+            spans.append((start, end + 1))
+    if spans:
+        start, stop = min(spans)
+        return text[start:stop]
+    return text
 
 
 def call_openrouter_json(prompt: str, system_prompt: str | None, schema: dict, model: str | None = None) -> dict:
     """Call OpenRouter and request a JSON object matching `schema`.
 
-    Uses response_format json_object where supported, plus fence-stripping
-    and retry up to 3x on parse failure.
+    Tries strict JSON mode (response_format json_object) first; some models
+    reject `response_format` or return empty content under it (e.g. thinking
+    models via OpenRouter), so the last attempts drop it and rely on the
+    prompt's explicit JSON instruction plus fence-stripping.
     Raises ValueError if a valid JSON object cannot be obtained.
     `model` overrides OPENROUTER_MODEL for this call (OpenRouter model id).
     """
@@ -108,17 +132,17 @@ def call_openrouter_json(prompt: str, system_prompt: str | None, schema: dict, m
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    body = {
-        "model": model or OPENROUTER_MODEL,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-    }
-
     last_err = None
-    for _ in range(3):
+    for use_json_mode in (True, True, False, False):
+        body = {"model": model or OPENROUTER_MODEL, "messages": messages}
+        if use_json_mode:
+            body["response_format"] = {"type": "json_object"}
+
         try:
             resp = _post_with_retry(body)
             text = resp.json()["choices"][0]["message"]["content"]
+            if not isinstance(text, str):
+                raise ValueError(f"model returned non-string content: {type(text).__name__}")
             text = _strip_fences(text)
             return json.loads(text)
         except (json.JSONDecodeError, ValueError) as e:
