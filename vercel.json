@@ -4,6 +4,10 @@
     { "source": "/bedtime-story", "destination": "/bedtime-story.html" },
     { "source": "/research", "destination": "/research.html" },
     { "source": "/interview-prep", "destination": "/interview-prep.html" },
+    { "source": "/api/interview_start", "destination": "/api/interview?action=start" },
+    { "source": "/api/interview_step", "destination": "/api/interview?action=step" },
+    { "source": "/api/interview_status", "destination": "/api/interview?action=status" },
+    { "source": "/api/interview_delete", "destination": "/api/interview?action=delete" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

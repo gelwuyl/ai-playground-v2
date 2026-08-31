@@ -95,7 +95,7 @@
             setView('processing');
             try {
                 // 1. Start Session
-                const startRes = await fetch('/api/interview_start', {
+                const startRes = await fetch('/api/interview?action=start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
@@ -104,9 +104,9 @@
 
                 // 2. Execute the 3 Phased Steps
                 const steps = [
-                    { name: 'Prospecting Roles', endpoint: '/api/interview_step' },
-                    { name: 'Researching Questions', endpoint: '/api/interview_step' },
-                    { name: 'Drafting Responses', endpoint: '/api/interview_step' }
+                    { name: 'Prospecting Roles', endpoint: '/api/interview?action=step' },
+                    { name: 'Researching Questions', endpoint: '/api/interview?action=step' },
+                    { name: 'Drafting Responses', endpoint: '/api/interview?action=step' }
                 ];
 
                 for (let i = 0; i < steps.length; i++) {
@@ -120,8 +120,8 @@
                     });
                 }
 
-                // 3. Fetch final guide and render
-                const statusRes = await fetch(`/api/interview_status?session_id=${session_id}`);
+                               // 3. Fetch final guide and render
+                const statusRes = await fetch(`/api/interview?action=status&session_id=${session_id}`);
                 const statusData = await statusRes.json();
 
                 renderDossier(statusData.final_guide);
