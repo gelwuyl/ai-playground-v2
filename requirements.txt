@@ -10,6 +10,8 @@ httpx==0.28.*
 # --- Shared / Vercel (OpenRouter) ---
 psycopg[binary]==3.2.*
 psycopg-pool==3.2.*
-python-dotenv==1.0.*
+# >=1.2.2,<2 is required by crewai; load_dotenv API is unchanged for our usage
+python-dotenv>=1.2.2,<2
 beautifulsoup4==4.12.*
-crewai==1.15.*
+# Exact lower bound avoids uv expanding 1.15.* into pre-release ranges
+crewai>=1.15.18,<2
