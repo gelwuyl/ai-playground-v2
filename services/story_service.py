@@ -6,7 +6,7 @@ from psycopg.rows import dict_row
 
 from services.database import get_conn
 
-MODEL_NAME = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+MODEL_NAME = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
 
 
 def save_story(prompt: str, story: str) -> None:

@@ -127,7 +127,8 @@ Open <http://localhost:8000>.
    - `sql/004_interview_prep.sql` (Mr. Brave interview tables)
 4. Add environment variables in Vercel (Production + Preview):
    - `OPENROUTER_API_KEY` — your OpenRouter API key
-   - `OPENROUTER_MODEL` — model slug (e.g. `google/gemini-2.5-flash`)
+   - `OPENROUTER_MODEL` — model slug shared by all four cloud tools (default: `openrouter/free`)
+   - `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, `INTERVIEW_WRITER_MODEL` — optional Mr. Brave per-stage overrides; when unset, they inherit `OPENROUTER_MODEL`
    - `DATABASE_URL` — Vercel Postgres connection string
    - `SERPAPI_KEY` — SerpApi key for Mr. Kaypoh's SEARCH tool
    - `USE_FIXTURES` — set `1` to use saved results instead of live SerpApi (optional)

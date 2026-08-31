@@ -18,7 +18,7 @@ import uuid
 from typing import Any, Dict
 
 from services.database import get_conn
-from services.openrouter_service import call_openrouter, call_openrouter_json
+from services.openrouter_service import OPENROUTER_MODEL, call_openrouter, call_openrouter_json
 
 # ==============================================================================
 # SCHEMA (mirrors sql/004_interview_prep.sql)
@@ -68,12 +68,11 @@ def _ensure_tables():
 # CONFIGURATION
 # ==============================================================================
 
-# OpenRouter model ids per stage. (The crewAI version used LiteLLM-style
-# "gemini-1.5-*" names, which are not valid OpenRouter ids.) Overridable via
-# environment variables in Vercel/local .env.
-PROSPECTOR_MODEL = os.environ.get("INTERVIEW_PROSPECTOR_MODEL", "google/gemini-2.5-flash")
-RESEARCHER_MODEL = os.environ.get("INTERVIEW_RESEARCHER_MODEL", "google/gemini-2.5-pro")
-WRITER_MODEL = os.environ.get("INTERVIEW_WRITER_MODEL", "google/gemini-2.5-pro")
+# Mr. Brave shares OPENROUTER_MODEL (default: openrouter/free) with the other
+# cloud tools. A stage-specific INTERVIEW_*_MODEL value is an optional override.
+PROSPECTOR_MODEL = os.environ.get("INTERVIEW_PROSPECTOR_MODEL", OPENROUTER_MODEL)
+RESEARCHER_MODEL = os.environ.get("INTERVIEW_RESEARCHER_MODEL", OPENROUTER_MODEL)
+WRITER_MODEL = os.environ.get("INTERVIEW_WRITER_MODEL", OPENROUTER_MODEL)
 
 # ==============================================================================
 # AGENT PERSONAS (former crewAI role/goal/backstory, kept as system prompts)
