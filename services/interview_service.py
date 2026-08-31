@@ -126,7 +126,8 @@ class InterviewService:
 
         prompt = (
             f"Search for open roles at {target_companies} that match the profile of a {target_role}. "
-            "Extract job title, responsibilities, and skills.\n\n"
+            "Extract job title, responsibilities, and skills for each. "
+            "Return 3 to 6 distinct roles.\n\n"
             'Return JSON: {"roles": [{"company": "...", "title": "...", "responsibilities": "...", "skills": "..."}]}'
         )
         try:
@@ -171,7 +172,8 @@ class InterviewService:
 
         prompt = (
             f"Based on these roles:\n{roles_context}\n"
-            "Generate a list of the most likely interview questions. Include technical and behavioral questions.\n\n"
+            "Generate 8 to 12 of the most likely interview questions across these roles. "
+            "Include a mix of technical and behavioral questions.\n\n"
             'Return JSON: {"questions": [{"question": "...", "type": "technical|behavioral"}]}'
         )
         try:
