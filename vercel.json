@@ -3,6 +3,7 @@
     { "source": "/question-log", "destination": "/question-log.html" },
     { "source": "/bedtime-story", "destination": "/bedtime-story.html" },
     { "source": "/research", "destination": "/research.html" },
+    { "source": "/interview-prep", "destination": "/interview-prep.html" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }
