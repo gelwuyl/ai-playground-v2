@@ -1,17 +1,20 @@
-# AI Playground — Little Miss Chatterbox + Little Miss Magic + Mr. Kaypoh Research Agent
+# AI Playground — Four AI Tools
 
-A single, portfolio-ready web project that runs **three apps** from one codebase:
+A portfolio-ready web project that brings together four AI tools in one codebase:
 
-1. **Little Miss Chatterbox** — non-stop talking: ask a question, get an answer, and keep a history.
-2. **Little Miss Magic** — boundless imagination: generate a gentle bedtime story for kids.
-3. **Mr. Kaypoh — Research Agent** — an agentic AI that searches the web, reads pages, and writes a sourced research brief using a ReAct loop.
+1. **Little Miss Chatterbox** — Ask a question, get an answer, and browse the conversation history.
+2. **Little Miss Magic** — Turn a simple idea into a gentle, magical bedtime story.
+3. **Mr. Kaypoh — Research Agent** — A ReAct research agent that searches the web, reads sources, and writes a cited brief.
+4. **Mr. Brave — Interview-CrewAI** — A three-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
 
-All three apps share one PostgreSQL database and one LLM backend, and can run in two modes:
+The tools share one PostgreSQL database and an OpenRouter-backed cloud LLM integration.
 
-- **Local mode** — FastAPI + **Ollama** (local LLM, e.g. `gemma4:e4b-mlx`) for offline development.
-- **Cloud mode** — **Vercel** serverless functions + **OpenRouter API** (OpenAI-compatible) for deployment.
+- **Local mode** — FastAPI + **Ollama** for Little Miss Chatterbox and Little Miss Magic.
+- **Cloud mode** — Vercel Python serverless functions + the **OpenRouter API** for all four web tools.
 
-An **LLM adapter** (`services/llm_adapter.py`) picks the backend at runtime based on environment variables, so the business logic is shared and not duplicated.
+The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is `openrouter/free`. Mr. Brave may optionally override this with `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, and `INTERVIEW_WRITER_MODEL`.
+
+> **Mr. Brave implementation note:** The tool was originally designed as a CrewAI-style three-agent workflow: Prospector → Interview Strategist → Professional Communications Expert. Its deployed Vercel implementation preserves that agentic pipeline using direct OpenRouter calls rather than importing the CrewAI package, because CrewAI’s dependency bundle exceeded Vercel Hobby’s 500 MB serverless-function limit.
 
 Mr. Kaypoh is a **ReAct research agent** (Reason + Act, after Yao et al. 2022). It runs a **client-driven loop**: the browser polls `POST /api/research_step` repeatedly, and each call executes exactly one tool action — **SEARCH** (SerpApi), **READ** (httpx + BeautifulSoup, capped at 5000 chars), or **FINISH** (write a sourced brief) — and persists it to Postgres. This keeps each serverless invocation short and gives the user a live trace. Safeguards are enforced server-side, not by the model: a **3-page gate** blocks FINISH until at least three different pages are read, duplicate URLs are refused, and a step limit (10) is hard-enforced. Every finding must end with a source URL in brackets or `[no source]`, and the brief prints two separate lists: **Pages read** and **Also found** (not opened). Evaluation runs 6 checks (search used, >1 source, within step limit, has recommendation, ≥3 sources, no `[no source]`). Set `USE_FIXTURES=1` to use saved SerpApi results instead of live queries.
 
@@ -20,19 +23,34 @@ Mr. Kaypoh is a **ReAct research agent** (Reason + Act, after Yao et al. 2022). 
 ```mermaid
 flowchart LR
     B[Browser] --> L[Landing page]
+
     L --> Q[Little Miss Chatterbox]
     L --> S[Little Miss Magic]
-    L --> R[Mr. Kaypoh]
+    L --> R[Mr. Kaypoh<br/>Research Agent]
+    L --> I[Mr. Brave<br/>Interview-CrewAI]
+
     Q --> A[LLM adapter]
     S --> A
-    R --> OR[OpenRouter JSON]
-    A -->|OPENROUTER_API_KEY set| OR
-    A -->|OLLAMA_BASE_URL set| O[Ollama - local]
-    Q --> P[(PostgreSQL)]
-    S --> P
-    R --> P
+    A -->|Local mode| O[Ollama]
+    A -->|Cloud mode| OR[OpenRouter API<br/>openrouter/free default]
+
+    R --> OR
     R --> SE[SerpApi search]
     R --> WB[Web page reader]
+
+    I --> IH["/api/interview<br/>consolidated Vercel handler"]
+    IH --> IP[Interview pipeline]
+    IP --> P1[Prospector]
+    IP --> P2[Interview Strategist]
+    IP --> P3[Professional Communications Expert]
+    P1 --> OR
+    P2 --> OR
+    P3 --> OR
+
+    Q --> DB[(PostgreSQL)]
+    S --> DB
+    R --> DB
+    I --> DB
 ```
 
 ## Project layout
