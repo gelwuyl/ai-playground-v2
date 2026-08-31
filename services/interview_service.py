@@ -5,7 +5,13 @@ persisted to Postgres. Originally written against the crewAI framework, but
 crewAI's dependency stack (chromadb, onnxruntime, litellm, kubernetes client)
 pushes the Vercel serverless bundle past its 500 MB limit, so the crew is
 orchestrated directly here: Prospector -> Researcher -> Writer, one stage per
-/api/interview_step call.
+/api/interview?action=step call.
+
+Schema note: sql/004_interview_prep.sql is the canonical schema, but migrations
+are applied manually (see README) and serverless deploys have no migration
+hook — 004 initially never reached the production DB and every interview
+endpoint 500'd. _ensure_tables() re-applies the same CREATE TABLE IF NOT
+EXISTS statements once per cold start so a missing migration self-heals.
 """
 import os
 import uuid
@@ -13,6 +19,50 @@ from typing import Any, Dict
 
 from services.database import get_conn
 from services.openrouter_service import call_openrouter, call_openrouter_json
+
+# ==============================================================================
+# SCHEMA (mirrors sql/004_interview_prep.sql)
+# ==============================================================================
+
+_DDL = """
+CREATE TABLE IF NOT EXISTS interview_prep_sessions (
+    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    target_role TEXT NOT NULL,
+    target_companies TEXT NOT NULL,
+    user_resume TEXT NOT NULL,
+    current_stage TEXT DEFAULT 'prospecting',
+    final_guide TEXT
+);
+CREATE TABLE IF NOT EXISTS interview_prep_roles (
+    role_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES interview_prep_sessions(session_id) ON DELETE CASCADE,
+    company_name TEXT NOT NULL,
+    job_title TEXT NOT NULL,
+    responsibilities TEXT,
+    required_skills TEXT
+);
+CREATE TABLE IF NOT EXISTS interview_prep_questions (
+    question_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id UUID REFERENCES interview_prep_roles(role_id) ON DELETE CASCADE,
+    question_text TEXT NOT NULL,
+    question_type TEXT
+);
+"""
+
+_tables_ready = False
+
+
+def _ensure_tables():
+    """Apply the 004 schema once per serverless instance (no-op afterwards)."""
+    global _tables_ready
+    if _tables_ready:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL)
+        conn.commit()
+    _tables_ready = True
 
 # ==============================================================================
 # CONFIGURATION
@@ -52,6 +102,7 @@ class InterviewService:
     @staticmethod
     def start_session(target_role: str, target_companies: str, user_resume: str) -> str:
         """Creates a new interview preparation session."""
+        _ensure_tables()
         session_id = str(uuid.uuid4())
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -65,6 +116,7 @@ class InterviewService:
     @staticmethod
     def run_prospecting(session_id: str) -> Dict[str, Any]:
         """Stage 1: Prospect for roles."""
+        _ensure_tables()
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT target_role, target_companies FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
@@ -107,6 +159,7 @@ class InterviewService:
     @staticmethod
     def run_researching(session_id: str) -> Dict[str, Any]:
         """Stage 2: Predict questions."""
+        _ensure_tables()
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT company_name, job_title, responsibilities, required_skills FROM interview_prep_roles WHERE session_id = %s", (session_id,))
@@ -154,6 +207,7 @@ class InterviewService:
     @staticmethod
     def run_writing(session_id: str) -> Dict[str, Any]:
         """Stage 3: Draft responses."""
+        _ensure_tables()
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT user_resume FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
@@ -187,6 +241,7 @@ class InterviewService:
     @staticmethod
     def delete_session(session_id: str):
         """Delete a session and all its related data."""
+        _ensure_tables()
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM interview_prep_sessions WHERE session_id = %s", (session_id,))

@@ -124,6 +124,7 @@ Open <http://localhost:8000>.
 3. Provision **Vercel Postgres** (Neon) and run the SQL migrations against it:
    - `sql/001_create_tables.sql` (interactions + stories)
    - `sql/003_research.sql` (research_sessions + research_steps)
+   - `sql/004_interview_prep.sql` (Mr. Brave interview tables)
 4. Add environment variables in Vercel (Production + Preview):
    - `OPENROUTER_API_KEY` — your OpenRouter API key
    - `OPENROUTER_MODEL` — model slug (e.g. `google/gemini-2.5-flash`)

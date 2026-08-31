@@ -12,7 +12,7 @@ original paths here with an `action` query parameter:
 from urllib.parse import parse_qs, urlparse
 
 from services.database import get_conn
-from services.interview_service import InterviewService
+from services.interview_service import InterviewService, _ensure_tables
 from services.vercel_handler import VercelHandler
 
 
@@ -79,6 +79,7 @@ class handler(VercelHandler):
         try:
             # Let the service determine the next step based on current_stage in DB
             # This is essentially the 'tick' for the agent crew
+            _ensure_tables()
             with get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT current_stage FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
@@ -114,6 +115,7 @@ class handler(VercelHandler):
         if not session_id:
             return self.json_response({"detail": "Missing session_id."}, 400)
 
+        _ensure_tables()
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT current_stage, final_guide FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
