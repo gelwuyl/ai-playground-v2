@@ -21,6 +21,8 @@ venv/
 .agents/
 .claude/
 skills-lock.json
+HANDOFF.md
+HANDOFF.md.backup-*
 
 # folder
 fastapi-ollama-postgres/
