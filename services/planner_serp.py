@@ -157,8 +157,15 @@ def geocode_place(name: str, city: str) -> dict | None:
             "raw_hours": r.get("operating_hours") or r.get("hours"),
         }
     except Exception as e:
-        print(f"geocode_place failed: {type(e).__name__}: {e}")
-        LAST_ERROR = f"geocode {type(e).__name__}: {e}"
+        body = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body = str(resp_obj.text)[:200]
+            except Exception:
+                body = ""
+        print(f"geocode_place failed: {type(e).__name__}: {e} {body}")
+        LAST_ERROR = f"geocode {type(e).__name__}: {e} {body}".strip()
         return None
 
 
@@ -234,8 +241,15 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
             return None
         return r.get("operating_hours") or r.get("hours")
     except Exception as e:
-        print(f"place_hours failed: {type(e).__name__}: {e}")
-        LAST_ERROR = f"hours {type(e).__name__}: {e}"
+        body = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body = str(resp_obj.text)[:200]
+            except Exception:
+                body = ""
+        print(f"place_hours failed: {type(e).__name__}: {e} {body}")
+        LAST_ERROR = f"hours {type(e).__name__}: {e} {body}".strip()
         return None
 
 
@@ -312,6 +326,13 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
             "minutes": float(minutes) if minutes is not None else None,
         }
     except Exception as e:
-        print(f"directions failed: {type(e).__name__}: {e}")
-        LAST_ERROR = f"directions {type(e).__name__}: {e}"
+        body = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body = str(resp_obj.text)[:200]
+            except Exception:
+                body = ""
+        print(f"directions failed: {type(e).__name__}: {e} {body}")
+        LAST_ERROR = f"directions {type(e).__name__}: {e} {body}".strip()
         return None

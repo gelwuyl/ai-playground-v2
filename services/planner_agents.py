@@ -439,6 +439,14 @@ def run_scout(ctx: dict) -> dict:
         "researched": n,
         "hours_verified": hours_verified_count,
         "hours_unverified": n - hours_verified_count,
+        "hours_diagnostics": [
+            {
+                "name": r.get("name"),
+                "hours_error": r.get("hours_error"),
+                "raw_hours_shape": r.get("raw_hours_shape"),
+            }
+            for r in research
+        ],
     }
 
 
