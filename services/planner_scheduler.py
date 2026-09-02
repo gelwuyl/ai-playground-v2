@@ -164,9 +164,15 @@ def _cluster(
     has_neighborhood = any(p.get("neighborhood", "") for p in pins)
     if has_neighborhood:
         # Group pins by neighborhood (sorted), then distribute groups to days.
+        # Pins WITHOUT a neighborhood are excluded here and geometric-assigned
+        # once below - bucketing them into a group AND the geometric fallback
+        # double-placed them (each blank-neighborhood pin scheduled twice).
         groups: dict[str, list[dict]] = {}
+        no_nb = [p for p in pins if not p.get("neighborhood", "")]
         for p in pins:
-            nb = p.get("neighborhood", "") or "_no_neighborhood_"
+            nb = p.get("neighborhood", "")
+            if not nb:
+                continue
             groups.setdefault(nb, []).append(p)
         # Sort groups by name for determinism; sort pins within by seq then name.
         sorted_group_names = sorted(groups.keys())
@@ -175,8 +181,6 @@ def _cluster(
             day_idx = i % num_days
             group_pins = sorted(groups[gn], key=lambda p: (p.get("seq", 0), p.get("name", "")))
             days[day_idx].extend(group_pins)
-        # Pins without a neighborhood: assign via geometric fallback.
-        no_nb = [p for p in pins if not p.get("neighborhood", "")]
         if no_nb and len(sorted_group_names) <= 1:
             # All pins lack neighborhood -> full geometric fallback
             return _geometric_cluster(pins, num_days)
