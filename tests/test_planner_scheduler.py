@@ -532,19 +532,44 @@ class TestMealsRest:
         meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
         assert len(meals) >= 1, f"Expected at least 1 meal slot, got {result['days'][0]['slots']}"
 
-    def test_no_meal_gap_gets_repairs_note(self):
-        """When no free 60-min gap exists around noon, no meal is inserted
-        and a repairs note is added instead."""
-        # Two 3h stops in 09:00-17:00 hours: A at 540-720, B at 735-915.
-        # No 60-min gap exists in the 11:00-14:00 window.
+    def test_packed_day_gets_meal_by_shift(self):
+        """A packed day with no free gap gets a meal by shifting later stops.
+
+        A at 09:00-12:00, B at 12:15-15:15 (15-min leg). The meal (12:00-13:00)
+        is inserted after A and B shifts +60 to 13:15-16:15, still inside
+        its 09:00-17:00 hours.
+        """
         pins = [
             make_pin("p1", "Long Visit A", 0, 1.28, 103.85, dwell=180, hours=hours_9to5()),
             make_pin("p2", "Long Visit B", 1, 1.29, 103.86, dwell=180, hours=hours_9to5()),
         ]
         legs = [make_leg("Long Visit A", "Long Visit B", "walk", 15)]
         result = schedule_trip(pins, legs, "2026-09-07", 1)
+        slots = result["days"][0]["slots"]
+        meals = [s for s in slots if s["kind"] == "meal"]
+        assert len(meals) == 1, f"Expected meal via shift, got: {slots}"
+        meal = meals[0]
+        assert meal["start_min"] == 720 and meal["end_min"] == 780
+        stop_b = [s for s in slots if s["name"] == "Long Visit B"][0]
+        assert stop_b["start_min"] == 795 and stop_b["end_min"] == 975  # +60
+        for s in slots:
+            assert s["end_min"] <= 17 * 60, f"stop outside hours: {s}"
+        repair_text = " ".join(result["repairs"])
+        assert "no room for meal slot" not in repair_text
+
+    def test_impossible_day_keeps_no_room_note(self):
+        """When NO boundary shift can fit the meal (day truly full), the
+        explicit repairs note is the fallback — never an overlapping slot."""
+        # A 09:00-12:40, B 12:55-16:45; shifting B +60 would end 17:45 > 17:00.
+        hours = hours_9to5()
+        pins = [
+            make_pin("p1", "Full A", 0, 1.28, 103.85, dwell=230, hours=hours),
+            make_pin("p2", "Full B", 1, 1.29, 103.86, dwell=230, hours=hours),
+        ]
+        legs = [make_leg("Full A", "Full B", "walk", 15)]
+        result = schedule_trip(pins, legs, "2026-09-07", 1)
         meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
-        assert len(meals) == 0, f"Expected no meal slot (no gap), got meals: {meals}"
+        assert len(meals) == 0, f"Expected no meal slot (impossible), got: {meals}"
         repair_text = " ".join(result["repairs"])
         assert "no room for meal slot" in repair_text
 
@@ -558,24 +583,27 @@ class TestMealsRest:
         assert len(meals) == 0, f"Expected no meal slot, got meals: {meals}"
 
     def test_heavy_day_gets_rest(self):
-        """A day with load > 8h (480 min) gets a rest slot."""
-        # Three stops with dwell 170 each = 510 min total load > 480.
-        # Use 30-min legs so a 30-min gap exists in the 13:30-16:00 rest zone.
+        """A day with load > 8h (480 min) gets a rest slot (after the meal)."""
+        # A 09:00-14:00 (300), leg 60, B 15:00-19:00 (240). Load 540 > 480.
+        # Meal: no free gap in 11:00-14:00 (A occupies it), so shift-insert
+        # at 14:00-15:00 (B -> 16:00-20:00, still inside 08:00-20:00 hours).
+        # Rest: the 15:00-16:00 window is then free for a 30-min rest.
         long_hours = {
             "days": {str(d): [{"open": "08:00", "close": "20:00"}] for d in range(7)}
         }
         pins = [
-            make_pin("p1", "Heavy A", 0, 1.28, 103.85, dwell=170, hours=long_hours),
-            make_pin("p2", "Heavy B", 1, 1.29, 103.86, dwell=170, hours=long_hours),
-            make_pin("p3", "Heavy C", 2, 1.30, 103.87, dwell=170, hours=long_hours),
+            make_pin("p1", "Heavy A", 0, 1.28, 103.85, dwell=300, hours=long_hours),
+            make_pin("p2", "Heavy B", 1, 1.29, 103.86, dwell=240, hours=long_hours),
         ]
         legs = [
-            make_leg("Heavy A", "Heavy B", "drive", 30),
-            make_leg("Heavy B", "Heavy C", "drive", 30),
+            make_leg("Heavy A", "Heavy B", "drive", 60),
         ]
         result = schedule_trip(pins, legs, "2026-09-07", 1)
-        rests = [s for s in result["days"][0]["slots"] if s["kind"] == "rest"]
-        assert len(rests) >= 1, f"Expected rest slot for heavy day, got: {result['days'][0]['slots']}"
+        slots = result["days"][0]["slots"]
+        rests = [s for s in slots if s["kind"] == "rest"]
+        meals = [s for s in slots if s["kind"] == "meal"]
+        assert len(meals) == 1, f"Expected meal slot, got: {slots}"
+        assert len(rests) >= 1, f"Expected rest slot for heavy day, got: {slots}"
 
     def test_food_category_anchors_meal(self):
         """A food-category stop anchors the meal at that stop."""
@@ -748,3 +776,36 @@ class TestScheduleStructure:
         repair_text = " ".join(result["repairs"])
         assert "[unverified]" in repair_text
         assert "No Hours Place" in repair_text
+
+
+class TestFoodAnchorSubstring:
+    """The food anchor must survive real-world LLM category strings."""
+
+    def test_hawker_centre_category_anchors_in_place(self):
+        # Maxwell-like stop with a realistic LLM category string. Span must
+        # cross the 360-min meal threshold: 270 + 90 + legs = 375 min.
+        pins = [
+            make_pin("p1", "Museum", 0, 1.28, 103.85, dwell=270, category="museum", hours=hours_9to5()),
+            make_pin("p2", "Maxwell Food Centre", 1, 1.29, 103.86, dwell=90,
+                     category="hawker centre", hours=hours_9to5()),
+        ]
+        legs = [make_leg("Museum", "Maxwell Food Centre", "walk", 15)]
+        result = schedule_trip(pins, legs, "2026-09-07", 1)
+        slots = result["days"][0]["slots"]
+        meals = [s for s in slots if s["kind"] == "meal"]
+        assert len(meals) == 1, f"Expected the food stop itself as meal, got: {slots}"
+        assert meals[0]["pin_id"] == "p2"
+        assert meals[0]["name"] == "Maxwell Food Centre"
+        # No separate generic "Meal" slot was added.
+        assert not any(s["name"] == "Meal" for s in slots)
+
+    def test_food_anchor_counts_toward_load(self):
+        # The anchored food stop's dwell must still count in the day load.
+        pins = [
+            make_pin("p1", "Maxwell Food Centre", 0, 1.29, 103.86, dwell=90,
+                     category="hawker centre", hours=hours_9to5()),
+        ]
+        result = schedule_trip(pins, [], "2026-09-07", 1)
+        day = result["days"][0]
+        assert day["total_scheduled_minutes"] == 90
+        assert result["stats"]["daily_loads"] == [90]

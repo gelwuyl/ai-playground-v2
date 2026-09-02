@@ -877,7 +877,13 @@ def _assemble_itinerary_json(
                 "minutes": leg.get("minutes", 0),
             })
 
-        total_travel = day.get("total_scheduled_minutes", 0)
+        # Per-day travel = sum of the legs actually used between stops that day
+        # (the schedule's total_scheduled_minutes counts stop time, not travel).
+        total_travel = sum(
+            leg.get("minutes", 0)
+            for leg in day.get("legs", [])
+            if isinstance(leg, dict)
+        )
         load_minutes = sum(
             s.get("dwell_minutes", 0)
             for s in day.get("slots", [])

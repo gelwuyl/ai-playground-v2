@@ -586,10 +586,10 @@ def _slot_day(
                     "start_min": start,
                     "end_min": end,
                     "dwell_minutes": dwell,
+                    "_is_food": _is_food_pin(pin),
                 })
                 cursor = end
                 placed = True
-                break
                 break
 
         if not placed:
@@ -629,31 +629,79 @@ def _find_gap(
     return None
 
 
-def _insert_meal_generic(
-    slots: list[dict], day_index: int, repairs: list[str]
-) -> list[dict]:
-    """Insert a generic 60-min meal slot at 12:00 or the nearest free window.
+def _insert_meal_by_shift(
+    slots: list[dict],
+    day_pins: list[dict],
+    day_dow: int,
+) -> list[dict] | None:
+    """Make room for a 60-min meal by shifting later stops +60 min.
 
-    Searches 11:00-14:00 for a non-overlapping 60-min gap.  If no gap
-    exists, does NOT insert a meal (an overlapping advisory slot is worse
-    than an explicit note) — instead appends a repairs note and returns
-    the slots unchanged.
+    Packed days have no free 60-min gap, so the meal must be inserted INTO
+    the timeline: between a stop and its successor, pushing every later
+    stop one meal-duration later.  Feasibility is preserved: each shifted
+    stop must still fit fully inside one of its open intervals for the day.
+
+    Boundaries are tried in preference order (meal window closest to 12:30
+    first).  Meals may start no earlier than 11:00 and no later than 16:00.
+    Returns the new slots list with the meal inserted, or None when no
+    boundary is feasible (caller falls back to a repairs note).
     """
-    gap = _find_gap(slots, MEAL_DURATION, 11 * 60, 14 * 60)
-    if gap is None:
-        repairs.append(f"no room for meal slot on day {day_index + 1}")
-        return list(slots)
+    intervals_by_pin = {
+        p.get("pin_id"): _intervals_for_day(p.get("opening_hours"), day_dow)
+        for p in day_pins
+    }
+    stop_slots = sorted(
+        [s for s in slots if s["kind"] == "stop"],
+        key=lambda s: s["start_min"],
+    )
+    best: tuple[int, list[dict]] | None = None  # (preference key, new slots)
 
-    meal_start, meal_end = gap
-    new_slots = list(slots)
-    new_slots.append({
-        "pin_id": None,
-        "name": "Meal",
-        "kind": "meal",
-        "start_min": meal_start,
-        "end_min": meal_end,
-        "dwell_minutes": MEAL_DURATION,
-    })
+    for i in range(len(stop_slots)):
+        meal_start = stop_slots[i]["end_min"]
+        meal_end = meal_start + MEAL_DURATION
+        if meal_start < 11 * 60 or meal_end > 16 * 60:
+            continue
+        # Every later stop must still fit its hours when shifted by MEAL_DURATION.
+        feasible = True
+        for later in stop_slots[i + 1:]:
+            new_start = later["start_min"] + MEAL_DURATION
+            new_end = later["end_min"] + MEAL_DURATION
+            ok = any(
+                new_start >= iv_open and new_end <= iv_close
+                for iv_open, iv_close in intervals_by_pin.get(later.get("pin_id"), [])
+            )
+            if not ok:
+                feasible = False
+                break
+        if not feasible:
+            continue
+        pref = abs(meal_end - (12 * 60 + 60))  # prefer meal window near 13:00
+        if best is None or pref < best[0]:
+            shifted = []
+            for s in slots:
+                if s["kind"] != "stop":
+                    continue
+                if any(s is later for later in stop_slots[i + 1:]):
+                    shifted.append({
+                        **s,
+                        "start_min": s["start_min"] + MEAL_DURATION,
+                        "end_min": s["end_min"] + MEAL_DURATION,
+                    })
+                else:
+                    shifted.append(dict(s))
+            shifted.append({
+                "pin_id": None,
+                "name": "Meal",
+                "kind": "meal",
+                "start_min": meal_start,
+                "end_min": meal_end,
+                "dwell_minutes": MEAL_DURATION,
+            })
+            best = (pref, shifted)
+
+    if best is None:
+        return None
+    new_slots = best[1]
     new_slots.sort(key=lambda s: (s["start_min"], s.get("pin_id") or ""))
     return new_slots
 
@@ -684,26 +732,60 @@ def _insert_rest(
     return new_slots
 
 
-def _anchor_meal_at_food_stop(
-    slots: list[dict],
-    day_pins: list[dict],
-) -> dict | None:
-    """If a food-category pin is among the day's stops, return a meal slot
-    anchored at that stop's time window. Returns None if no food stop found."""
-    slot_map = {s["pin_id"]: s for s in slots if s["kind"] == "stop" and s.get("pin_id")}
-    for pin in sorted(day_pins, key=lambda p: (p.get("seq", 0), p.get("name", ""))):
-        if pin.get("category", "").lower() == "food" and pin.get("pin_id") in slot_map:
-            stop_slot = slot_map[pin["pin_id"]]
-            # Anchor the meal at the stop's time.
-            return {
-                "pin_id": pin.get("pin_id"),
-                "name": f"Meal at {pin.get('name', '')}",
-                "kind": "meal",
-                "start_min": stop_slot["start_min"],
-                "end_min": stop_slot["end_min"],
-                "dwell_minutes": stop_slot["dwell_minutes"],
-            }
-    return None
+_FOOD_CATEGORY_WORDS = ("food", "hawker", "restaurant", "cafe", "café", "market")
+
+
+def _is_food_pin(pin: dict) -> bool:
+    """True when a pin plausibly IS a meal stop.
+
+    LLM categories vary ("food", "food centre", "hawker centre", ...), so
+    match on substrings of the category, falling back to the place name when
+    the category is missing.  Deterministic and case-insensitive.
+    """
+    category = (pin.get("category") or "").lower()
+    if any(w in category for w in _FOOD_CATEGORY_WORDS):
+        return True
+    if not category:
+        name = (pin.get("name") or "").lower()
+        if any(w in name for w in ("food", "hawker", "market")):
+            return True
+    return False
+
+
+def _stop_load(slots: list[dict]) -> int:
+    """Day load in minutes: all stops plus food stops anchored as meals.
+
+    An anchored meal keeps its pin_id — it is still a visited place, so its
+    dwell counts toward the daily load (meals/rest inserted as filler do not).
+    """
+    return sum(
+        s["dwell_minutes"]
+        for s in slots
+        if s["kind"] == "stop" or (s["kind"] == "meal" and s.get("pin_id"))
+    )
+
+
+def _anchor_meal_at_food_stop(slots: list[dict]) -> bool:
+    """If a food-category stop is among the day's slots, mark it as the meal.
+
+    The food stop IS the meal: its slot's kind flips to "meal" in place
+    (name/pin_id/times unchanged, dwell still counted by _stop_load).
+    Returns True when a slot was anchored.  Ties go to the food stop nearest
+    midday, then by seq order — deterministic.
+    """
+    food_slots = [
+        s for s in slots
+        if s["kind"] == "stop" and s.get("pin_id") and s.get("_is_food")
+    ]
+    if not food_slots:
+        return False
+    midday = 12 * 60
+    chosen = min(
+        food_slots,
+        key=lambda s: (abs((s["start_min"] + s["end_min"]) // 2 - midday), s["start_min"]),
+    )
+    chosen["kind"] = "meal"
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -739,18 +821,37 @@ def _schedule_day(
     last_end = max(s["end_min"] for s in slots)
     span = last_end - first_start
 
-    # Total stop load (meals/rest excluded).
-    total_load = sum(s["dwell_minutes"] for s in slots if s["kind"] == "stop")
+    # Total stop load (meals/rest excluded; anchored food meals still count).
+    total_load = _stop_load(slots)
 
     if span >= MEAL_THRESHOLD_MIN:
-        # Try anchoring at a food stop first.
-        anchored = _anchor_meal_at_food_stop(slots, day_pins)
-        if anchored is not None:
-            slots.append(anchored)
+        # 1) A food stop IS the meal — anchor in place.
+        if _anchor_meal_at_food_stop(slots):
             slots.sort(key=lambda s: (s["start_min"], s.get("pin_id") or ""))
         else:
-            # Generic meal insertion at 12:00 or nearest free window.
-            slots = _insert_meal_generic(slots, day_index, repairs)
+            # 2) Drop the meal into an existing free gap near midday.
+            gap = _find_gap(slots, MEAL_DURATION, 11 * 60, 14 * 60)
+            if gap is not None:
+                meal_start, meal_end = gap
+                slots.append({
+                    "pin_id": None,
+                    "name": "Meal",
+                    "kind": "meal",
+                    "start_min": meal_start,
+                    "end_min": meal_end,
+                    "dwell_minutes": MEAL_DURATION,
+                })
+                slots.sort(key=lambda s: (s["start_min"], s.get("pin_id") or ""))
+            else:
+                # 3) Make room: shift later stops +60 min (hours stay feasible).
+                shifted = _insert_meal_by_shift(slots, day_pins, day_dow)
+                if shifted is not None:
+                    slots = shifted
+                else:
+                    # Genuinely packed: explicit note, never an overlap.
+                    repairs.append(
+                        f"no room for meal slot on day {day_index + 1}"
+                    )
 
         # Rest insertion for heavy days.
         if total_load > REST_THRESHOLD_MIN:
@@ -764,7 +865,8 @@ def _schedule_day(
 # ---------------------------------------------------------------------------
 def _build_day_legs(slots: list[dict], legs: list[dict]) -> list[dict]:
     """Build the per-day legs list from the slot order."""
-    stop_slots = [s for s in slots if s["kind"] == "stop"]
+    # Anchored food meals are real places — the travel chain includes them.
+    stop_slots = [s for s in slots if s["kind"] == "stop" or (s["kind"] == "meal" and s.get("pin_id"))]
     result = []
     for k in range(len(stop_slots) - 1):
         a_name = stop_slots[k]["name"]
@@ -797,7 +899,7 @@ def _compute_stats(days: list[dict]) -> dict:
         day_legs = day.get("legs", [])
         day_travel = sum(l["minutes"] for l in day_legs)
         total_travel += day_travel
-        load = sum(s["dwell_minutes"] for s in day["slots"] if s["kind"] == "stop")
+        load = _stop_load(day["slots"])
         if load > 0:
             daily_loads.append(load)
 
@@ -848,7 +950,7 @@ def runner_ups(
     # Compute per-day loads.
     day_loads = []
     for day in days:
-        load = sum(s["dwell_minutes"] for s in day["slots"] if s["kind"] == "stop")
+        load = _stop_load(day["slots"])
         day_loads.append(load)
 
     for day_idx in range(num_days):
@@ -985,9 +1087,11 @@ def schedule_trip(
 
         slots, day_unplaced = _schedule_day(day_pins, dow, day_idx, legs, repairs)
         unplaced_all.extend(day_unplaced)
+        for s in slots:
+            s.pop("_is_food", None)  # private marker, not part of the contract
 
         day_legs = _build_day_legs(slots, legs)
-        total_scheduled = sum(s["dwell_minutes"] for s in slots if s["kind"] == "stop")
+        total_scheduled = _stop_load(slots)
 
         days_output.append({
             "day_index": day_idx,
