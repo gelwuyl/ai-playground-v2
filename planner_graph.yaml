@@ -1,0 +1,53 @@
+# Mr. Bounce — Trip Orchestrator graph definition.
+#
+# Declarative description of the 7-node crew consumed by the runner in
+# services/planner_graph.py.  The runner loads and validates this file at
+# import/run time so the graph topology stays config-driven.
+#
+# Backbone: ingest -> scout -> logistics -> scheduler -> critic
+#           -> alternatives -> compiler (sequential)
+# One conditional loop edge: critic FAIL routes back to scheduler,
+# bounded at max_critic_rounds (3 rounds: critic_round 0, 1, 2 allowed;
+# if the 3rd critic run still fails, the graph force-proceeds forward
+# to alternatives — never loops forever).
+
+name: mr-bounce-trip-orchestrator
+entry: ingest
+max_critic_rounds: 3
+nodes:
+  - name: ingest
+    type: tool
+    title: Ingest pins
+  - name: scout
+    type: agent
+    title: Scout research (per pin)
+    fanout: per_pin
+  - name: logistics
+    type: tool
+    title: Leg-time logistics
+  - name: scheduler
+    type: tool
+    title: Deterministic scheduler
+  - name: critic
+    type: agent
+    title: Critic audit
+    conditional:
+      "on": verdict          # output dict key inspected (quoted: YAML treats bare on as True)
+      pass_value: PASS
+      pass_next: alternatives
+      fail_next: scheduler
+  - name: alternatives
+    type: agent
+    title: Alternatives
+  - name: compiler
+    type: agent
+    title: Compiler
+    terminal: true
+edges:
+  - {from: ingest, to: scout}
+  - {from: scout, to: logistics}
+  - {from: logistics, to: scheduler}
+  - {from: scheduler, to: critic}
+  - {from: critic, to: alternatives, when: pass}
+  - {from: critic, to: scheduler, when: fail, max_rounds: 3}
+  - {from: alternatives, to: compiler}
