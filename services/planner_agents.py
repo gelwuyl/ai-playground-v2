@@ -327,6 +327,14 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
 
     opening_hours = parse_raw_hours(raw_hours)
     hours_verified = bool(opening_hours["days"])
+    # Diagnostics: why hours are missing when they are. LAST_ERROR carries the
+    # SerpApi-side reason; the shape shows when hours exist but parsing failed.
+    hours_error = getattr(planner_serp, "LAST_ERROR", None)
+    raw_hours_shape = None
+    if raw_hours:
+        raw_hours_shape = (
+            sorted(raw_hours.keys()) if isinstance(raw_hours, dict) else type(raw_hours).__name__
+        )
 
     # --- LLM call for category, dwell, booking, tip ---
     user_prompt = (
@@ -378,6 +386,8 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
         "rating": None,
         "opening_hours": opening_hours,
         "hours_verified": hours_verified,
+        "hours_error": hours_error,
+        "raw_hours_shape": raw_hours_shape,
         "category": category,
         "dwell_minutes": dwell_minutes,
         "booking_required": booking_required,
