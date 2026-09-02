@@ -40,6 +40,43 @@ def _fixture_lookup(name: str) -> dict | None:
     return None
 
 
+# Maps-engine searches without a location bias (ll) can return empty
+# local_results for far-away cities. Cache one GPS origin per city.
+_CITY_LL: dict[str, str] = {}
+
+
+def _city_ll(city: str) -> str | None:
+    key = (city or "").strip().lower()
+    if not key:
+        return None
+    if key in _CITY_LL:
+        return _CITY_LL[key] or None
+    k = _serp_key()
+    if not k:
+        return None
+    try:
+        resp = httpx.get(
+            "https://serpapi.com/search.json",
+            params={"engine": "google_maps", "type": "search", "q": city, "api_key": k, "hl": "en"},
+            headers={"User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            _CITY_LL[key] = ""
+            return None
+        results = data.get("local_results") or data.get("places") or []
+        gps = (results[0].get("gps_coordinates") if results else None) or {}
+        lat, lng = gps.get("latitude"), gps.get("longitude")
+        ll = f"@{lat},{lng},13z" if lat is not None and lng is not None else ""
+        _CITY_LL[key] = ll
+        return ll or None
+    except Exception:
+        _CITY_LL[key] = ""
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -70,26 +107,35 @@ def geocode_place(name: str, city: str) -> dict | None:
         return None
 
     try:
-        resp = httpx.get(
-            "https://serpapi.com/search.json",
-            params={
-                "engine": "google_maps",
-                "type": "search",
-                "q": f"{name} {city}",
-                "api_key": key,
-                "hl": "en",
-            },
-            headers={"User-Agent": USER_AGENT},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("error"):
-            LAST_ERROR = str(data["error"])
-            return None
-        results = data.get("local_results", [])
+        base_params = {
+            "engine": "google_maps",
+            "type": "search",
+            "q": f"{name} {city}",
+            "api_key": key,
+            "hl": "en",
+        }
+        data = None
+        results: list = []
+        for ll in (None, _city_ll(city)):
+            params = dict(base_params)
+            if ll:
+                params["ll"] = ll
+            resp = httpx.get(
+                "https://serpapi.com/search.json",
+                params=params,
+                headers={"User-Agent": USER_AGENT},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("error"):
+                LAST_ERROR = str(data["error"])
+                return None
+            results = data.get("local_results") or data.get("places") or []
+            if results:
+                break
         if not results:
-            LAST_ERROR = f"no local_results for {name!r}"
+            LAST_ERROR = f"no local_results for {name!r} (with and without city bias)"
             return None
         r = results[0]
         gps = r.get("gps_coordinates") or {}
