@@ -332,9 +332,16 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
     hours_error = getattr(planner_serp, "LAST_ERROR", None)
     raw_hours_shape = None
     if raw_hours:
-        raw_hours_shape = (
-            sorted(raw_hours.keys()) if isinstance(raw_hours, dict) else type(raw_hours).__name__
-        )
+        if isinstance(raw_hours, dict):
+            raw_hours_shape = sorted(raw_hours.keys())
+        elif isinstance(raw_hours, list):
+            first = raw_hours[0] if raw_hours else None
+            if isinstance(first, dict):
+                raw_hours_shape = f"list[{len(raw_hours)}] item_keys={sorted(first.keys())}"
+            elif first is not None:
+                raw_hours_shape = f"list[{len(raw_hours)}] first={str(first)[:80]}"
+            else:
+                raw_hours_shape = "list[0]"
 
     # --- LLM call for category, dwell, booking, tip ---
     user_prompt = (

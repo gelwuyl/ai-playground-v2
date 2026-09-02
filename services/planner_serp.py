@@ -5,6 +5,8 @@ Degrades gracefully: returns None on any failure (missing key, network error,
 unexpected response shape). Never raises.
 """
 import os
+import re
+
 import httpx
 
 from services.planner_types import normalize_place_name, leg_cache_key
@@ -161,7 +163,7 @@ def geocode_place(name: str, city: str) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = str(resp_obj.text)[:200]
+                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
             except Exception:
                 body = ""
         print(f"geocode_place failed: {type(e).__name__}: {e} {body}")
@@ -245,7 +247,7 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = str(resp_obj.text)[:200]
+                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
             except Exception:
                 body = ""
         print(f"place_hours failed: {type(e).__name__}: {e} {body}")
@@ -330,7 +332,7 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = str(resp_obj.text)[:200]
+                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
             except Exception:
                 body = ""
         print(f"directions failed: {type(e).__name__}: {e} {body}")
