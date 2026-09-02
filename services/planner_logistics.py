@@ -33,6 +33,7 @@ import services.planner_types as pt
 
 # Observability counter: incremented on each real (non-fixture) SerpApi call.
 _serp_calls_made = 0
+_serp_errors: list[str] = []   # deduped reasons for failed directions calls
 
 # DB availability flag: checked once; if False, skip all cache I/O.
 _db_checked = False
@@ -136,9 +137,16 @@ def _serp_directions(start: str, end: str, mode: str, city: str) -> dict | None:
         # Only count real (non-fixture) calls.
         if not getattr(planner_serp, "USE_FIXTURES", False):
             _serp_calls_made += 1
+        if result is None:
+            reason = getattr(planner_serp, "LAST_ERROR", None)
+            if reason and reason not in _serp_errors:
+                _serp_errors.append(reason)
         return result
     except Exception as e:
-        print(f"[planner_logistics] SerpApi directions failed ({start} -> {end}, {mode}): {type(e).__name__}: {e}")
+        msg = f"{type(e).__name__}: {e}"
+        if msg not in _serp_errors:
+            _serp_errors.append(msg)
+        print(f"[planner_logistics] SerpApi directions failed ({start} -> {end}, {mode}): {msg}")
         return None
 
 
@@ -193,7 +201,13 @@ def _cache_read(cache_key: str) -> dict | None:
 def _cache_write(cache_key: str, from_name: str, to_name: str,
                  walk_minutes, transit_minutes, drive_minutes,
                  distance_km, estimated: bool) -> None:
-    """Upsert a leg row into planner_leg_cache. Swallows DB errors."""
+    """Upsert a leg row into planner_leg_cache. Swallows DB errors.
+
+    Estimated (haversine-fallback) rows are NOT cached - caching them would
+    permanently mask a directions failure behind a fake-precision number.
+    """
+    if estimated:
+        return
     if not _db_available():
         return
     try:
@@ -245,6 +259,10 @@ def get_leg(a: str, b: str, city: str,
     cached = None
     if use_cache:
         cached = _cache_read(cache_key)
+        # Estimated rows are haversine fallbacks from a failed live fetch;
+        # treat them as a miss so live directions are retried (self-healing).
+        if cached and cached.get("estimated", False):
+            cached = None
 
     walk_minutes = None
     transit_minutes = None
@@ -485,4 +503,5 @@ def run_logistics(ctx: dict) -> dict:
         "legs_count": len(legs),
         "serp_calls": _serp_calls_made,
         "estimated_legs": estimated_count,
+        "serp_errors": list(_serp_errors),
     }

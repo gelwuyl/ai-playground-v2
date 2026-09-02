@@ -573,17 +573,34 @@ def build_registry() -> dict:
         else:
             sched_pins = pins
 
+        # Unresolved pins have no coordinates - they cannot be routed or
+        # slotted sanely. Skip them with an explicit repair note instead of
+        # letting None coordinates poison clustering and ordering.
+        resolved_sched = []
+        skipped_unresolved = []
+        for p in sched_pins:
+            if p.get("lat") is not None and p.get("lng") is not None:
+                resolved_sched.append(p)
+            else:
+                skipped_unresolved.append(p.get("name") or p.get("raw_input") or "?")
+        sched_pins = resolved_sched
+
         legs = ctx.get("legs") or []
         start_date = ctx.get("start_date", "")
         num_days = ctx.get("num_days", 2)
 
         schedule = _scheduler.run_schedule(sched_pins, legs, start_date, num_days)
         ctx["schedule"] = schedule
+        for name in skipped_unresolved:
+            schedule.setdefault("repairs", []).append(
+                f"skipped unresolved pin {name!r} (could not geocode) - not scheduled"
+            )
         return {
             "days": len(schedule.get("days", [])),
             "unplaced": len(schedule.get("unplaced", [])),
             "repairs": schedule.get("repairs", []),
             "stats": schedule.get("stats", {}),
+            "skipped_unresolved": skipped_unresolved,
         }
 
     registry = {
