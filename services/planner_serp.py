@@ -24,6 +24,11 @@ USER_AGENT = (
 LAST_ERROR: str | None = None
 
 
+def _redact(text: str) -> str:
+    """Strip api_key values from any error text before it is surfaced or logged."""
+    return re.sub(r"api_key=[^&\s]+", "api_key=REDACTED", text)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -163,11 +168,12 @@ def geocode_place(name: str, city: str) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
+                body = str(resp_obj.text)[:200]
             except Exception:
                 body = ""
-        print(f"geocode_place failed: {type(e).__name__}: {e} {body}")
-        LAST_ERROR = f"geocode {type(e).__name__}: {e} {body}".strip()
+        msg = _redact(f"{type(e).__name__}: {e} {body}").strip()
+        print(f"geocode_place failed: {msg}")
+        LAST_ERROR = f"geocode {msg}"
         return None
 
 
@@ -247,11 +253,12 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
+                body = str(resp_obj.text)[:200]
             except Exception:
                 body = ""
-        print(f"place_hours failed: {type(e).__name__}: {e} {body}")
-        LAST_ERROR = f"hours {type(e).__name__}: {e} {body}".strip()
+        msg = _redact(f"{type(e).__name__}: {e} {body}").strip()
+        print(f"place_hours failed: {msg}")
+        LAST_ERROR = f"hours {msg}"
         return None
 
 
@@ -332,9 +339,10 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         resp_obj = getattr(e, "response", None)
         if resp_obj is not None:
             try:
-                body = re.sub(r"api_key=[^&\\s]+", "api_key=REDACTED", str(resp_obj.text))[:200]
+                body = str(resp_obj.text)[:200]
             except Exception:
                 body = ""
-        print(f"directions failed: {type(e).__name__}: {e} {body}")
-        LAST_ERROR = f"directions {type(e).__name__}: {e} {body}".strip()
+        msg = _redact(f"{type(e).__name__}: {e} {body}").strip()
+        print(f"directions failed: {msg}")
+        LAST_ERROR = f"directions {msg}"
         return None

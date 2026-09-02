@@ -38,6 +38,24 @@ class TestParseRawHours:
         result = parse_raw_hours(raw)
         assert result == {"days": {"0": [{"open": "09:00", "close": "21:00"}]}}
 
+    def test_serp_list_of_single_key_day_dicts_string_values(self):
+        """SerpApi place_results list form observed live: list[7] of {day: 'window'}."""
+        raw = [{"monday": "9 AM-9 PM"}, {"tuesday": "Closed"}]
+        result = parse_raw_hours(raw)
+        assert result == {"days": {"0": [{"open": "09:00", "close": "21:00"}], "1": []}}
+
+    def test_serp_list_of_single_key_day_dicts_dict_values(self):
+        """SerpApi list form where each day maps to an {open, close} dict."""
+        raw = [{"friday": {"open": "10:00", "close": "18:00"}}, {"saturday": "Closed"}]
+        result = parse_raw_hours(raw)
+        assert result == {"days": {"4": [{"open": "10:00", "close": "18:00"}], "5": []}}
+
+    def test_serp_list_skips_non_dict_items(self):
+        """Non-dict items in the list form are skipped, not fatal."""
+        raw = ["garbage", {"sunday": "Open 24 hours"}]
+        result = parse_raw_hours(raw)
+        assert result == {"days": {"6": [{"open": "00:00", "close": "23:59"}]}}
+
     def test_closed(self):
         """Closed day -> empty list."""
         raw = {"monday": "Closed"}

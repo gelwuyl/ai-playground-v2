@@ -218,13 +218,27 @@ def parse_raw_hours(raw: dict | None) -> dict:
     """Convert a SerpApi-style operating_hours passthrough to canonical shape.
 
     Input: ``{"monday": "9 AM-9 PM", "tuesday": "Closed", ...}`` (7 lowercase
-    day keys; values may use en-dash or hyphen, may be None/absent).
+    day keys; values may use en-dash or hyphen, may be None/absent).  Also
+    accepts the list form SerpApi returns on place_results: a list of 7
+    single-key day dicts ``[{"monday": {...} | "9 AM-9 PM"}, ...]``.
 
     Output: ``{"days": {"0": [{"open": "09:00", "close": "21:00"}], ...}}``
     where "0"=Monday .. "6"=Sunday.  Closed days map to ``[]``.  Missing/None
     raw -> ``{"days": {}}``.  "Open 24 hours" -> ``[{"open": "00:00",
     "close": "23:59"}]``.  Unparseable windows are skipped (never raise).
     """
+    if isinstance(raw, list):
+        merged: dict = {}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            for day, value in item.items():
+                if isinstance(value, dict) and value:
+                    o, c = value.get("open"), value.get("close")
+                    value = f"{o}-{c}" if o and c else None
+                if value is not None:
+                    merged[str(day).strip().lower()] = value
+        raw = merged or None
     if not raw or not isinstance(raw, dict):
         return {"days": {}}
 
