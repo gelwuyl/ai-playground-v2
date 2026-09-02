@@ -16,6 +16,11 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+# Reason for the most recent failure on this worker (reset at each call).
+# Runtime logs are not exposed on the Hobby plan, so callers surface this
+# through result payloads instead of relying on stdout.
+LAST_ERROR: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -43,6 +48,8 @@ def geocode_place(name: str, city: str) -> dict | None:
 
     Returns dict with keys: name, lat, lng, address, place_id, raw_hours.
     """
+    global LAST_ERROR
+    LAST_ERROR = None
     if USE_FIXTURES:
         entry = _fixture_lookup(name)
         if entry is None:
@@ -59,6 +66,7 @@ def geocode_place(name: str, city: str) -> dict | None:
     key = _serp_key()
     if not key:
         print("geocode_place: SERPAPI_KEY not set")
+        LAST_ERROR = "SERPAPI_KEY not set"
         return None
 
     try:
@@ -78,6 +86,7 @@ def geocode_place(name: str, city: str) -> dict | None:
         data = resp.json()
         results = data.get("local_results", [])
         if not results:
+            LAST_ERROR = f"serpapi: no local_results for {name!r}"
             return None
         r = results[0]
         gps = r.get("gps_coordinates") or {}
@@ -91,6 +100,7 @@ def geocode_place(name: str, city: str) -> dict | None:
         }
     except Exception as e:
         print(f"geocode_place failed: {type(e).__name__}: {e}")
+        LAST_ERROR = f"geocode {type(e).__name__}: {e}"
         return None
 
 
@@ -100,6 +110,8 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
     Tries the 'place' engine with place_id first; falls back to a 'search' query.
     Returns the raw hours passthrough (whatever shape SerpApi returns) or None.
     """
+    global LAST_ERROR
+    LAST_ERROR = None
     if USE_FIXTURES:
         entry = _fixture_lookup(name)
         if entry is None:
@@ -109,6 +121,7 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
     key = _serp_key()
     if not key:
         print("place_hours: SERPAPI_KEY not set")
+        LAST_ERROR = "SERPAPI_KEY not set"
         return None
 
     try:
@@ -152,11 +165,13 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
         data = resp.json()
         results = data.get("local_results", [])
         if not results:
+            LAST_ERROR = f"serpapi: no local_results for {name!r}"
             return None
         r = results[0]
         return r.get("operating_hours") or r.get("hours")
     except Exception as e:
         print(f"place_hours failed: {type(e).__name__}: {e}")
+        LAST_ERROR = f"hours {type(e).__name__}: {e}"
         return None
 
 
@@ -167,6 +182,8 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
     Returns dict with "distance_km" (float|None) and "minutes" (float|None),
     or None on any failure.
     """
+    global LAST_ERROR
+    LAST_ERROR = None
     if USE_FIXTURES:
         from services import planner_fixtures
         ck = f"{leg_cache_key(start, end)}:{mode}"
@@ -178,6 +195,7 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
     key = _serp_key()
     if not key:
         print("directions: SERPAPI_KEY not set")
+        LAST_ERROR = "SERPAPI_KEY not set"
         return None
 
     try:
@@ -198,6 +216,7 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         data = resp.json()
         directions_list = data.get("directions")
         if not directions_list or not isinstance(directions_list, list):
+            LAST_ERROR = f"serpapi: no directions for {mode} leg"
             return None
         el = directions_list[0]
 
@@ -227,4 +246,5 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         }
     except Exception as e:
         print(f"directions failed: {type(e).__name__}: {e}")
+        LAST_ERROR = f"directions {type(e).__name__}: {e}"
         return None

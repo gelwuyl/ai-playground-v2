@@ -370,6 +370,7 @@ def run_ingest(ctx: dict) -> dict:
     specs = parse_pin_inputs(payload)
     pins: list[dict] = []
     failed: list[str] = []
+    failed_details: list[dict] = []
 
     for spec in specs:
         pin_id = str(uuid.uuid4())
@@ -398,6 +399,10 @@ def run_ingest(ctx: dict) -> dict:
                 if lat is not None and resolved_name is None:
                     resolve_error = resolve_error or "coords found but name unresolved"
                 else:
+                    serp_mod = sys.modules.get("services.planner_serp")
+                    serp_reason = getattr(serp_mod, "LAST_ERROR", None)
+                    if serp_reason:
+                        resolve_error = resolve_error or f"serpapi: {serp_reason}"
                     resolve_error = resolve_error or f"could not resolve {spec['raw_input']}"
         else:
             name = spec["raw_input"]
@@ -405,6 +410,10 @@ def run_ingest(ctx: dict) -> dict:
             lng = None
             address = None
             resolved = False
+            serp_mod = sys.modules.get("services.planner_serp")
+            serp_reason = getattr(serp_mod, "LAST_ERROR", None)
+            if serp_reason:
+                resolve_error = resolve_error or f"serpapi: {serp_reason}"
             resolve_error = resolve_error or f"could not resolve {spec['raw_input']}"
 
         pin = {
@@ -423,6 +432,7 @@ def run_ingest(ctx: dict) -> dict:
         pins.append(pin)
         if not resolved:
             failed.append(name)
+            failed_details.append({"raw_input": spec["raw_input"], "source": spec["source"], "error": resolve_error})
 
     save_pins(session_id, pins)
     ctx["pins"] = pins
@@ -432,4 +442,5 @@ def run_ingest(ctx: dict) -> dict:
         "pins_resolved": n_resolved,
         "pins_total": len(pins),
         "failed": failed,
+        "failed_details": failed_details,
     }
