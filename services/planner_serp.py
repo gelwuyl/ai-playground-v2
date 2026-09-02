@@ -263,9 +263,10 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
 
 
 def directions(start: str, end: str, mode: str, city: str) -> dict | None:
-    """Fetch directions between two places via SerpApi Google Directions engine.
+    """Fetch directions between two places via SerpApi Google Maps Directions.
 
-    mode is one of "walking", "transit", "driving".
+    mode is one of "walking", "transit", "driving" (mapped to SerpApi's
+    numeric travel_mode: 2=walking, 3=transit, 0=driving).
     Returns dict with "distance_km" (float|None) and "minutes" (float|None),
     or None on any failure.
     """
@@ -285,14 +286,19 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         LAST_ERROR = "SERPAPI_KEY not set"
         return None
 
+    travel_mode = {"driving": "0", "walking": "2", "transit": "3"}.get(mode)
+    if travel_mode is None:
+        LAST_ERROR = f"unsupported mode {mode!r}"
+        return None
+
     try:
         resp = httpx.get(
             "https://serpapi.com/search.json",
             params={
-                "engine": "google_directions",
+                "engine": "google_maps_directions",
                 "start_addr": f"{start}, {city}",
                 "end_addr": f"{end}, {city}",
-                "mode": mode,
+                "travel_mode": travel_mode,
                 "api_key": key,
                 "hl": "en",
             },
@@ -306,29 +312,35 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
             return None
         directions_list = data.get("directions")
         if not directions_list or not isinstance(directions_list, list):
-            LAST_ERROR = f"no directions for {mode} leg"
+            keys = sorted(data.keys()) if isinstance(data, dict) else "non-dict"
+            LAST_ERROR = f"no directions for {mode} leg; response keys: {keys}"
             return None
         el = directions_list[0]
 
-        # distance_km: try fixed_distance_km, then distance_m/1000, then distance_km
+        # SerpApi google_maps_directions: distance = meters, duration = seconds.
+        # Older/alternate shapes kept as fallbacks.
         distance_km = el.get("fixed_distance_km")
-        if distance_km is None:
-            dm = el.get("distance_m")
-            if dm:
-                distance_km = dm / 1000.0
+        if distance_km is None and el.get("distance") is not None:
+            distance_km = el["distance"] / 1000.0
+        if distance_km is None and el.get("distance_m"):
+            distance_km = el["distance_m"] / 1000.0
         if distance_km is None:
             distance_km = el.get("distance_km")
 
-        # minutes: try fixed_duration_min, duration_min, duration_minutes, duration_s/60
         minutes = el.get("fixed_duration_min")
+        if minutes is None and el.get("duration") is not None:
+            minutes = el["duration"] / 60.0
         if minutes is None:
             minutes = el.get("duration_min")
         if minutes is None:
             minutes = el.get("duration_minutes")
-        if minutes is None:
-            ds = el.get("duration_s")
-            if ds:
-                minutes = ds / 60.0
+        if minutes is None and el.get("duration_s"):
+            minutes = el["duration_s"] / 60.0
+
+        if distance_km is None and minutes is None:
+            item_keys = sorted(el.keys()) if isinstance(el, dict) else "non-dict"
+            LAST_ERROR = f"directions item missing distance/duration; item keys: {item_keys}"
+            return None
 
         return {
             "distance_km": float(distance_km) if distance_km is not None else None,
