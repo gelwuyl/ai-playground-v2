@@ -84,9 +84,12 @@ def geocode_place(name: str, city: str) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
+        if data.get("error"):
+            LAST_ERROR = str(data["error"])
+            return None
         results = data.get("local_results", [])
         if not results:
-            LAST_ERROR = f"serpapi: no local_results for {name!r}"
+            LAST_ERROR = f"no local_results for {name!r}"
             return None
         r = results[0]
         gps = r.get("gps_coordinates") or {}
@@ -163,9 +166,12 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
+        if data.get("error"):
+            LAST_ERROR = str(data["error"])
+            return None
         results = data.get("local_results", [])
         if not results:
-            LAST_ERROR = f"serpapi: no local_results for {name!r}"
+            LAST_ERROR = f"no local_results for {name!r}"
             return None
         r = results[0]
         return r.get("operating_hours") or r.get("hours")
@@ -214,9 +220,12 @@ def directions(start: str, end: str, mode: str, city: str) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
+        if data.get("error"):
+            LAST_ERROR = str(data["error"])
+            return None
         directions_list = data.get("directions")
         if not directions_list or not isinstance(directions_list, list):
-            LAST_ERROR = f"serpapi: no directions for {mode} leg"
+            LAST_ERROR = f"no directions for {mode} leg"
             return None
         el = directions_list[0]
 
