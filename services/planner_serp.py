@@ -115,7 +115,7 @@ def geocode_place(name: str, city: str) -> dict | None:
             "hl": "en",
         }
         data = None
-        results: list = []
+        entry = None
         for ll in (None, _city_ll(city)):
             params = dict(base_params)
             if ll:
@@ -131,13 +131,22 @@ def geocode_place(name: str, city: str) -> dict | None:
             if data.get("error"):
                 LAST_ERROR = str(data["error"])
                 return None
-            results = data.get("local_results") or data.get("places") or []
-            if results:
+            # A specific-place query returns a single place_results object;
+            # a broader query returns a local_results list.
+            local = data.get("local_results") or data.get("places")
+            if isinstance(local, list) and local:
+                entry = local[0]
+            elif isinstance(local, dict) and local:
+                entry = local
+            if not entry and isinstance(data.get("place_results"), dict) and data["place_results"]:
+                entry = data["place_results"]
+            if entry:
                 break
-        if not results:
-            LAST_ERROR = f"no results for {name!r}; response keys: {sorted(data.keys())}"
+        if not entry:
+            keys = sorted(data.keys()) if isinstance(data, dict) else "non-dict"
+            LAST_ERROR = f"no results for {name!r}; response keys: {keys}"
             return None
-        r = results[0]
+        r = entry
         gps = r.get("gps_coordinates") or {}
         return {
             "name": r.get("title"),
@@ -190,10 +199,13 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
             )
             resp.raise_for_status()
             data = resp.json()
-            results = data.get("local_results", [])
-            if results:
-                r = results[0]
-                hours = r.get("operating_hours") or r.get("hours")
+            if data.get("error"):
+                LAST_ERROR = str(data["error"])
+                return None
+            # type=place responses carry a single place_results object
+            pr = data.get("place_results") or {}
+            if pr:
+                hours = pr.get("operating_hours") or pr.get("hours")
                 if hours is not None:
                     return hours
 
@@ -215,11 +227,11 @@ def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
         if data.get("error"):
             LAST_ERROR = str(data["error"])
             return None
-        results = data.get("local_results", [])
-        if not results:
-            LAST_ERROR = f"no local_results for {name!r}"
+        results = data.get("local_results") or []
+        r = results[0] if results else (data.get("place_results") or None)
+        if not r:
+            LAST_ERROR = f"no results for {name!r}; response keys: {sorted(data.keys())}"
             return None
-        r = results[0]
         return r.get("operating_hours") or r.get("hours")
     except Exception as e:
         print(f"place_hours failed: {type(e).__name__}: {e}")
