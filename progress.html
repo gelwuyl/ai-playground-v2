@@ -13,31 +13,33 @@
   .building { color: #b45309; font-weight: 600; } .pending { color: #64748b; }
   .meta { color: #52606d; font-size: 0.85rem; }
   ul { max-width: 900px; }
+  .note { background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; padding: 0.6rem 0.9rem; max-width: 900px; font-size: 0.9rem; }
 </style>
 </head>
 <body>
 <h1>🧭 Mr. Bounce — Trip Orchestrator (feat/travel-planner-orchestrator)</h1>
 <p class="meta">Builder branch live progress · updated 2026-09-03 · 7-node crew: Ingest → Scout → Logistics → Scheduler → Critic → Alternatives → Compiler (Critic fail loops back to Scheduler, max 3 rounds)</p>
+<p class="note"><strong>Model assignment corrected mid-run (2026-09-03):</strong> wave-1 builders ran on opus after sonnet spawn failures (kept, sunk cost); from the correction onward routine builders run on sonnet — opus is reserved for the scheduler/solver builder and all critics.</p>
 
 <h2>Components vs critics</h2>
 <table>
   <tr><th>Component</th><th>Builder</th><th>Critic (opus, fresh ctx)</th><th>Status</th></tr>
   <tr><td>Foundations: sql/005 + planner_db + planner_types</td><td>lead</td><td>— (scaffolding)</td><td class="pass">committed</td></tr>
-  <tr><td>Scheduler solver (objective cascade)</td><td class="pending">queued (opus)</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>Graph engine + planner_graph.yaml + trace</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>Ingest tool (short links + text pins)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>Logistics tool + leg cache</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>SerpApi client + fixtures (data foundation)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>LLM agents (Scout, Critic, Alternatives, Compiler)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>api/planner.py dispatcher + vercel.json</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
-  <tr><td>Frontend: trip-planner.html + index card + docs</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Scheduler solver (objective cascade)</td><td class="pass">done (opus, by design)</td><td class="fail">GAPs found → fix in progress</td><td class="building">fixing</td></tr>
+  <tr><td>Graph engine + planner_graph.yaml + trace</td><td class="pass">done (opus, wave 1)</td><td class="pass">PASS</td><td class="pass">passed</td></tr>
+  <tr><td>SerpApi client + fixtures (data foundation)</td><td class="pass">done (opus, wave 1)</td><td class="pass">PASS</td><td class="pass">passed</td></tr>
+  <tr><td>Ingest tool (short links + text pins)</td><td class="pass">done (opus, wave 1)</td><td class="fail">GAP found → fix in progress</td><td class="building">fixing</td></tr>
+  <tr><td>Logistics tool + leg cache</td><td class="pass">done (opus, wave 1)</td><td class="pass">PASS</td><td class="pass">passed</td></tr>
+  <tr><td>LLM agents (Scout, Critic, Alternatives, Compiler)</td><td class="pass">done (opus, wave 1)</td><td class="fail">GAPs found → fix in progress (sonnet)</td><td class="building">fixing</td></tr>
+  <tr><td>Frontend: trip-planner.html + index card + docs</td><td class="pass">done (opus, wave 1)</td><td class="pass">PASS (LOW docs gap fixed by lead)</td><td class="pass">passed</td></tr>
+  <tr><td>api/planner.py dispatcher</td><td class="building">building (opus, wave 1)</td><td class="pending">queued</td><td class="building">building</td></tr>
   <tr><td>Integration: tests green + real E2E</td><td>lead</td><td>—</td><td class="pending">pending</td></tr>
 </table>
 
-<h2>Known environment gaps</h2>
+<h2>Blockers awaiting user intervention</h2>
 <ul>
-  <li><strong>SERPAPI_KEY missing from worktree .env</strong> — .env has DATABASE_URL + OPENROUTER_API_KEY only. SerpApi-dependent code honors <code>USE_FIXTURES=1</code> (repo pattern); local E2E will run with fixture SerpApi data + real LLM + real Postgres. Flag for orchestrator: production SerpApi key needed for quality-bar item 2.</li>
-  <li>Local Postgres 17.10 reachable at localhost:5432/llm_question_log — planner_* tables self-heal via _ensure_tables.</li>
+  <li><strong>SERPAPI_KEY missing from worktree .env</strong> — .env has DATABASE_URL + OPENROUTER_API_KEY only. SerpApi-dependent code honors <code>USE_FIXTURES=1</code> (repo pattern); local E2E runs with fixture SerpApi data + real LLM + real Postgres. Production SerpApi key needed to verify quality-bar item 2 (SerpApi-verified opening hours) in production.</li>
+  <li>Local Postgres 17.10 reachable at localhost:5432/llm_question_log — planner_* tables self-heal via _ensure_tables (no intervention needed; listed for transparency).</li>
 </ul>
 </body>
 </html>

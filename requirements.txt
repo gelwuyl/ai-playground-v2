@@ -12,3 +12,4 @@ psycopg[binary]==3.2.*
 psycopg-pool==3.2.*
 python-dotenv==1.0.*
 beautifulsoup4==4.12.*
+pyyaml==6.0.*

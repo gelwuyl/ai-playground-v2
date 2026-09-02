@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mr. Bounce — Trip Orchestrator</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/story.css">
+  <style>
+    /* ---- Page-local styles (mirrors research.html pattern) ---- */
+    .container { max-width: 960px; }
+
+    /* Intake form */
+    .intake-form {
+      background: rgba(255,255,255,0.92);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      color: #111;
+    }
+    .intake-form label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #333;
+    }
+    .intake-form .field { margin-bottom: 1rem; }
+    .intake-form input[type="text"],
+    .intake-form input[type="date"],
+    .intake-form input[type="number"] {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-family: inherit;
+      color: #111;
+    }
+    .intake-form textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      resize: vertical;
+      color: #111;
+    }
+    .intake-form .row { display: flex; gap: 1rem; }
+    .intake-form .row > .field { flex: 1; }
+
+    /* ---- Animated 7-node graph ---- */
+    .graph-wrap {
+      background: rgba(255,255,255,0.92);
+      border-radius: 16px;
+      padding: 1.5rem 1rem 1rem;
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+    }
+    .graph-wrap h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: #1f2933;
+    }
+    .graph-legend {
+      display: flex;
+      gap: 1.25rem;
+      font-size: 0.8rem;
+      color: #52606d;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .graph-legend .swatch {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
+    .graph-legend .swatch.agent { border-radius: 50%; background: #667eea; }
+    .graph-legend .swatch.tool  { background: #76b84d; }
+    .graph-legend .swatch.done  { background: #16a34a; }
+    .graph-legend .swatch.fail  { background: #dc2626; }
+    .graph-legend .swatch.retry { background: #f59e0b; }
+
+    #graph-svg {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: 280px;
+    }
+
+    /* Node state transitions */
+    .node-rect, .node-circle {
+      transition: fill 0.4s ease, stroke 0.4s ease, stroke-width 0.4s ease, filter 0.4s ease, opacity 0.4s ease;
+    }
+    .node-rect.idle, .node-circle.idle {
+      fill: #e4e7eb; stroke: #cbd2d9; stroke-width: 1.5;
+    }
+    .node-rect.active, .node-circle.active {
+      fill: #667eea; stroke: #4f46e5; stroke-width: 2.5;
+      filter: drop-shadow(0 0 10px rgba(102,126,234,0.7));
+      animation: node-pulse 1.2s ease-in-out infinite;
+    }
+    .node-rect.done, .node-circle.done {
+      fill: #16a34a; stroke: #15803d; stroke-width: 2;
+      filter: drop-shadow(0 0 6px rgba(22,163,74,0.4));
+    }
+    .node-rect.failed, .node-circle.failed {
+      fill: #dc2626; stroke: #991b1b; stroke-width: 2;
+    }
+    .node-rect.retry, .node-circle.retry {
+      fill: #fde68a; stroke: #f59e0b; stroke-width: 2; opacity: 0.75;
+    }
+
+    @keyframes node-pulse {
+      0%, 100% { filter: drop-shadow(0 0 4px rgba(102,126,234,0.4)); }
+      50%      { filter: drop-shadow(0 0 14px rgba(102,126,234,0.85)); }
+    }
+
+    .node-label {
+      font-size: 11px; font-weight: 600; fill: #1f2933;
+      text-anchor: middle; pointer-events: none;
+    }
+    .node-icon {
+      font-size: 16px; text-anchor: middle; pointer-events: none;
+    }
+    .node-type-tag {
+      font-size: 8px; fill: #6b7280; text-anchor: middle; pointer-events: none;
+    }
+    .round-badge {
+      font-size: 9px; font-weight: 700; fill: #fff;
+      text-anchor: middle; pointer-events: none;
+    }
+    .round-badge-bg { transition: opacity 0.3s ease; }
+    .round-badge-bg.hidden { opacity: 0; }
+
+    /* Edges */
+    .edge {
+      stroke: #9ca3af; stroke-width: 2; fill: none;
+      transition: stroke 0.4s ease, stroke-width 0.4s ease;
+    }
+    .edge.active {
+      stroke: #667eea; stroke-width: 2.5;
+      stroke-dasharray: 6 4;
+      animation: edge-march 0.8s linear infinite;
+    }
+    .edge.done { stroke: #16a34a; stroke-width: 2; }
+    .edge.retry {
+      stroke: #f59e0b; stroke-width: 2;
+      stroke-dasharray: 5 3;
+      animation: edge-march 0.8s linear infinite;
+    }
+    @keyframes edge-march { to { stroke-dashoffset: -10; } }
+
+    .edge-label {
+      font-size: 9px; fill: #f59e0b; font-weight: 600;
+      text-anchor: middle; pointer-events: none;
+    }
+
+    /* ---- Trace list ---- */
+    #trace { word-break: break-word; overflow-wrap: anywhere; min-width: 0; margin-top: 1rem; }
+    .trace-row {
+      background: rgba(255,255,255,0.92); color: #111;
+      border-radius: 10px; margin-bottom: 0.6rem;
+      overflow: hidden; border: 1px solid #e4e7eb;
+    }
+    .trace-row.failed { border-color: #dc2626; border-left: 4px solid #dc2626; }
+    .trace-header {
+      padding: 0.6rem 1rem; cursor: pointer;
+      display: flex; align-items: center; gap: 0.5rem;
+      user-select: none;
+    }
+    .trace-header .seq { font-size: 0.75rem; font-weight: 700; color: #6b7280; min-width: 2rem; }
+    .trace-header .name { font-weight: 600; font-size: 0.95rem; flex: 1; }
+    .trace-header .badge {
+      font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px;
+      background: #e4e7eb; color: #52606d;
+    }
+    .trace-header .badge.agent { background: #ddd6fe; color: #5b21b6; }
+    .trace-header .badge.tool  { background: #d1fae5; color: #065f46; }
+    .trace-header .badge.round { background: #fef3c7; color: #92400e; }
+    .trace-header .status-icon { font-size: 1rem; }
+    .trace-header .duration { font-size: 0.75rem; color: #6b7280; }
+    .trace-header .chevron { font-size: 0.7rem; color: #9ca3af; transition: transform 0.2s ease; }
+    .trace-row.expanded .chevron { transform: rotate(90deg); }
+    .trace-body { display: none; padding: 0 1rem 0.75rem; border-top: 1px solid #e4e7eb; }
+    .trace-row.expanded .trace-body { display: block; }
+    .trace-body .block { margin-top: 0.5rem; }
+    .trace-body .block-label {
+      font-size: 0.75rem; font-weight: 700; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.2rem;
+    }
+    .trace-body pre {
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+      background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;
+      padding: 0.5rem 0.75rem; font-size: 0.8rem; line-height: 1.5;
+      font-family: "SF Mono", "Monaco", "Consolas", monospace; color: #111; margin: 0;
+    }
+    .trace-body .error-text { color: #dc2626; font-size: 0.85rem; margin-top: 0.3rem; }
+
+    /* ---- Itinerary rendering ---- */
+    #itinerary { margin-top: 1.5rem; }
+    .day-card {
+      background: rgba(255,255,255,0.92); color: #111;
+      border-radius: 16px; padding: 1.25rem 1.5rem;
+      margin-bottom: 1.25rem; border: 1px solid #e4e7eb;
+    }
+    .day-card .day-header { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem; }
+    .day-card .day-num { font-size: 1.3rem; font-weight: 800; color: #1f2933; }
+    .day-card .day-date { font-size: 0.9rem; color: #6b7280; }
+    .day-card .day-theme { font-size: 1rem; font-weight: 600; color: #4f46e5; margin-bottom: 0.35rem; }
+    .day-card .day-intro { font-size: 0.9rem; color: #52606d; margin-bottom: 0.75rem; line-height: 1.5; }
+    .day-card .day-load { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.75rem; }
+    .stop-list { list-style: none; padding: 0; margin: 0 0 0.75rem 0; }
+    .stop-item { padding: 0.5rem 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
+    .stop-item:last-child { border-bottom: none; }
+    .stop-item .stop-time { font-weight: 700; color: #1f2933; margin-right: 0.5rem; }
+    .stop-item .stop-name { font-weight: 600; }
+    .stop-item .stop-addr { font-size: 0.8rem; color: #6b7280; }
+    .stop-tips { font-size: 0.8rem; color: #6b7280; font-style: italic; margin-top: 0.2rem; }
+    .leg-line { font-size: 0.78rem; color: #6b7280; padding-left: 1rem; margin: 0.15rem 0; }
+    .alternatives-section { margin-top: 1rem; padding-top: 0.75rem; border-top: 2px dashed #e4e7eb; }
+    .alternatives-section h4 { font-size: 0.9rem; font-weight: 700; color: #52606d; margin-bottom: 0.5rem; }
+    .alt-item { font-size: 0.85rem; padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; }
+    .alt-item:last-child { border-bottom: none; }
+    .alt-item .alt-name { font-weight: 600; color: #1f2933; }
+    .alt-item .alt-tradeoff { color: #6b7280; font-size: 0.82rem; }
+
+    .badge {
+      display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.45rem;
+      border-radius: 4px; font-weight: 600; margin-left: 0.4rem; vertical-align: middle;
+    }
+    .badge.stop        { background: #dbeafe; color: #1e40af; }
+    .badge.meal        { background: #fef3c7; color: #92400e; }
+    .badge.rest        { background: #d1fae5; color: #065f46; }
+    .badge.unverified  { background: #fee2e2; color: #991b1b; }
+    .badge.booking     { background: #ede9fe; color: #5b21b6; }
+
+    #markdown-out { margin-top: 1.5rem; }
+    #markdown-out pre {
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+      background: rgba(255,255,255,0.92); color: #111; border-radius: 12px;
+      padding: 1rem; font-size: 0.85rem; line-height: 1.6;
+    }
+
+    #error { color: #dc2626; margin-top: 0.75rem; font-weight: 600; }
+    #status-msg { font-size: 0.9rem; color: #fff; opacity: 0.9; margin-top: 0.5rem; }
+    .delete-btn { margin-top: 1rem; background: #dc2626; }
+    .delete-btn:hover { background: #b91c1c; }
+
+    /* Accessibility: disable pulse animations */
+    @media (prefers-reduced-motion: reduce) {
+      .node-rect.active, .node-circle.active,
+      .edge.active, .edge.retry { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="/">&#8592; Back to AI Playground</a>
+    <h1>&#129518; Mr. Bounce</h1>
+    <p class="subtitle">A 7-agent crew that turns pinned places into a day-by-day plan.</p>
+
+    <!-- Intake form -->
+    <div class="intake-form" id="intake">
+      <div class="field">
+        <label for="dest">Destination</label>
+        <input type="text" id="dest" placeholder="City, e.g. Singapore">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="start-date">Start date</label>
+          <input type="date" id="start-date">
+        </div>
+        <div class="field">
+          <label for="num-days">Days (1&#8211;7)</label>
+          <input type="number" id="num-days" min="1" max="7" value="2">
+        </div>
+      </div>
+      <div class="field">
+        <label for="pins">Pinned places</label>
+        <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
+      </div>
+      <button id="start-btn">Start Planning</button>
+      <button id="delete-btn" class="delete-btn" style="display:none;">Delete Session</button>
+    </div>
+
+    <div id="error"></div>
+    <div id="status-msg"></div>
+
+    <!-- Animated 7-node graph -->
+    <div class="graph-wrap" id="graph-wrap" style="display:none;" aria-label="7-node crew pipeline graph: Ingest, Scout, Logistics, Scheduler, Critic, Alternatives, Compiler">
+      <h3>Crew Pipeline</h3>
+      <div class="graph-legend">
+        <span><span class="swatch agent"></span>Agent node</span>
+        <span><span class="swatch tool"></span>Tool node</span>
+        <span><span class="swatch done"></span>Done</span>
+        <span><span class="swatch fail"></span>Failed</span>
+        <span><span class="swatch retry"></span>Retry round</span>
+      </div>
+      <svg id="graph-svg" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Seven-node crew pipeline with retry loop from Critic back to Scheduler"></svg>
+    </div>
+
+    <!-- Trace list -->
+    <ol id="trace" style="list-style:none; padding:0;"></ol>
+
+    <!-- Itinerary output -->
+    <div id="itinerary"></div>
+    <div id="markdown-out"></div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /* ---- Constants ---- */
+    var NODES = [
+      { name: "Ingest",       type: "tool",  icon: "📥" }, /* 📥 */
+      { name: "Scout",        type: "agent", icon: "🔍" }, /* 🔍 */
+      { name: "Logistics",    type: "tool",  icon: "🚗" }, /* 🚗 */
+      { name: "Scheduler",    type: "tool",  icon: "📅" }, /* 📅 */
+      { name: "Critic",       type: "agent", icon: "✏️" }, /* ✏️ */
+      { name: "Alternatives", type: "agent", icon: "🔄" }, /* 🔄 */
+      { name: "Compiler",     type: "agent", icon: "📋" }  /* 📋 */
+    ];
+    var NODE_W = 80;
+    var NODE_H = 44;
+    var NODE_Y = 80;
+    var SPACING = 100;
+    var X_OFFSET = 50;
+    var ARC_DIP = 20;
+    var SVG_NS = "http://www.w3.org/2000/svg";
+
+    var $ = function(id) { return document.getElementById(id); };
+    var sessionId = null;
+    var timer = null;
+    var criticRound = 0;
+
+    /* ---- Build the SVG graph ---- */
+    function buildGraph() {
+      var svg = $("graph-svg");
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+      /* Defs for arrowhead markers */
+      var defs = document.createElementNS(SVG_NS, "defs");
+      defs.innerHTML =
+        '<marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#9ca3af"/>' +
+        '</marker>' +
+        '<marker id="ah-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#667eea"/>' +
+        '</marker>' +
+        '<marker id="ah-d" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#16a34a"/>' +
+        '</marker>' +
+        '<marker id="ah-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#f59e0b"/>' +
+        '</marker>';
+      svg.appendChild(defs);
+
+      /* Draw edges between consecutive nodes */
+      for (var i = 0; i < NODES.length - 1; i++) {
+        var x1 = X_OFFSET + i * SPACING + NODE_W / 2;
+        var x2 = X_OFFSET + (i + 1) * SPACING - NODE_W / 2;
+        var y = NODE_Y + NODE_H / 2;
+        var cx1 = x1 + (x2 - x1) * 0.3;
+        var cx2 = x1 + (x2 - x1) * 0.7;
+        var d = "M " + x1 + " " + y + " C " + cx1 + " " + (y + ARC_DIP) + ", " + cx2 + " " + (y + ARC_DIP) + ", " + x2 + " " + y;
+        var edge = document.createElementNS(SVG_NS, "path");
+        edge.setAttribute("class", "edge");
+        edge.setAttribute("id", "edge-" + i);
+        edge.setAttribute("d", d);
+        edge.setAttribute("marker-end", "url(#ah)");
+        svg.appendChild(edge);
+      }
+
+      /* Loop-back arc: Critic (index 4) down and back to Scheduler (index 3) */
+      var criticCx = X_OFFSET + 4 * SPACING + NODE_W / 2;
+      var schedCx = X_OFFSET + 3 * SPACING + NODE_W / 2;
+      var loopD = "M " + criticCx + " " + (NODE_Y + NODE_H) +
+                  " C " + criticCx + " " + (NODE_Y + NODE_H + 50) +
+                  ", " + schedCx + " " + (NODE_Y + NODE_H + 50) +
+                  ", " + schedCx + " " + (NODE_Y + NODE_H);
+      var loopEdge = document.createElementNS(SVG_NS, "path");
+      loopEdge.setAttribute("class", "edge");
+      loopEdge.setAttribute("id", "edge-loop");
+      loopEdge.setAttribute("d", loopD);
+      loopEdge.setAttribute("marker-end", "url(#ah-r)");
+      loopEdge.setAttribute("stroke-dasharray", "5 3");
+      svg.appendChild(loopEdge);
+
+      /* Loop-back label */
+      var loopLabel = document.createElementNS(SVG_NS, "text");
+      loopLabel.setAttribute("class", "edge-label");
+      loopLabel.setAttribute("x", (criticCx + schedCx) / 2);
+      loopLabel.setAttribute("y", NODE_Y + NODE_H + 55);
+      loopLabel.textContent = "retry (max 3)";
+      svg.appendChild(loopLabel);
+
+      /* Draw nodes */
+      for (var j = 0; j < NODES.length; j++) {
+        var node = NODES[j];
+        var nx = X_OFFSET + j * SPACING;
+        var isTool = node.type === "tool";
+        var shape = isTool ? "rect" : "circle";
+        var el = document.createElementNS(SVG_NS, shape);
+        el.setAttribute("id", "node-" + j);
+        el.setAttribute("class", (isTool ? "node-rect" : "node-circle") + " idle");
+
+        if (isTool) {
+          el.setAttribute("x", nx);
+          el.setAttribute("y", NODE_Y);
+          el.setAttribute("width", NODE_W);
+          el.setAttribute("height", NODE_H);
+          el.setAttribute("rx", 6);
+        } else {
+          el.setAttribute("cx", nx + NODE_W / 2);
+          el.setAttribute("cy", NODE_Y + NODE_H / 2);
+          el.setAttribute("r", NODE_W / 2);
+        }
+        svg.appendChild(el);
+
+        /* Icon */
+        var iconText = document.createElementNS(SVG_NS, "text");
+        iconText.setAttribute("class", "node-icon");
+        iconText.setAttribute("x", nx + NODE_W / 2);
+        iconText.setAttribute("y", NODE_Y + NODE_H / 2 + 5);
+        iconText.textContent = node.icon;
+        svg.appendChild(iconText);
+
+        /* Label */
+        var labelText = document.createElementNS(SVG_NS, "text");
+        labelText.setAttribute("class", "node-label");
+        labelText.setAttribute("x", nx + NODE_W / 2);
+        labelText.setAttribute("y", NODE_Y + NODE_H + 18);
+        labelText.textContent = node.name;
+        svg.appendChild(labelText);
+
+        /* Type tag */
+        var tagText = document.createElementNS(SVG_NS, "text");
+        tagText.setAttribute("class", "node-type-tag");
+        tagText.setAttribute("x", nx + NODE_W / 2);
+        tagText.setAttribute("y", NODE_Y + NODE_H + 30);
+        tagText.textContent = node.type;
+        svg.appendChild(tagText);
+
+        /* Round badge for Scheduler and Critic */
+        if (node.name === "Scheduler" || node.name === "Critic") {
+          var badgeBg = document.createElementNS(SVG_NS, "circle");
+          badgeBg.setAttribute("id", "badge-" + j);
+          badgeBg.setAttribute("class", "round-badge-bg hidden");
+          badgeBg.setAttribute("cx", nx + NODE_W - 6);
+          badgeBg.setAttribute("cy", NODE_Y + 6);
+          badgeBg.setAttribute("r", 8);
+          badgeBg.setAttribute("fill", "#f59e0b");
+          svg.appendChild(badgeBg);
+
+          var badgeText = document.createElementNS(SVG_NS, "text");
+          badgeText.setAttribute("class", "round-badge");
+          badgeText.setAttribute("id", "badge-text-" + j);
+          badgeText.setAttribute("x", nx + NODE_W - 6);
+          badgeText.setAttribute("y", NODE_Y + 9);
+          badgeText.textContent = "1";
+          badgeText.style.opacity = "0";
+          svg.appendChild(badgeText);
+        }
+      }
+    }
+
+    /* ---- Update graph node states from trace data ---- */
+    function updateGraph(trace, currentNode, round) {
+      var nodeStatusMap = {};
+      var nodeRoundMap = {};
+      for (var i = 0; i < trace.length; i++) {
+        var t = trace[i];
+        nodeStatusMap[t.node_name] = t.status;
+        if (t.round != null) nodeRoundMap[t.node_name] = t.round;
+      }
+
+      for (var j = 0; j < NODES.length; j++) {
+        var name = NODES[j].name;
+        var el = $("node-" + j);
+        if (!el) continue;
+        var isTool = NODES[j].type === "tool";
+        var baseClass = isTool ? "node-rect" : "node-circle";
+
+        if (name === currentNode) {
+          el.setAttribute("class", baseClass + " active");
+        } else if (nodeStatusMap[name] === "completed") {
+          el.setAttribute("class", baseClass + " done");
+        } else if (nodeStatusMap[name] === "failed") {
+          el.setAttribute("class", baseClass + " failed");
+        } else if (nodeRoundMap[name] && nodeRoundMap[name] > 0 && name === "Scheduler") {
+          el.setAttribute("class", baseClass + " retry");
+        } else {
+          el.setAttribute("class", baseClass + " idle");
+        }
+      }
+
+      /* Update edges */
+      for (var k = 0; k < NODES.length - 1; k++) {
+        var edge = $("edge-" + k);
+        if (!edge) continue;
+        var toName = NODES[k + 1].name;
+        var fromDone = nodeStatusMap[NODES[k].name] === "completed";
+        var toActive = toName === currentNode;
+        var toDone = nodeStatusMap[toName] === "completed";
+
+        edge.setAttribute("class", "edge");
+        if (toActive) {
+          edge.setAttribute("class", "edge active");
+          edge.setAttribute("marker-end", "url(#ah-a)");
+        } else if (toDone) {
+          edge.setAttribute("class", "edge done");
+          edge.setAttribute("marker-end", "url(#ah-d)");
+        } else {
+          edge.setAttribute("marker-end", "url(#ah)");
+        }
+      }
+
+      /* Loop-back edge */
+      var loopEdge = $("edge-loop");
+      if (loopEdge) {
+        if (round > 0 && (nodeStatusMap["Critic"] === "completed" || currentNode === "Scheduler")) {
+          loopEdge.setAttribute("class", "edge retry");
+          loopEdge.setAttribute("marker-end", "url(#ah-r)");
+        } else {
+          loopEdge.setAttribute("class", "edge");
+          loopEdge.setAttribute("marker-end", "url(#ah-r)");
+          loopEdge.setAttribute("stroke-dasharray", "5 3");
+        }
+      }
+
+      /* Round badges */
+      for (var n = 0; n < NODES.length; n++) {
+        var badge = $("badge-" + n);
+        var badgeText = $("badge-text-" + n);
+        if (!badge || !badgeText) continue;
+        var r = nodeRoundMap[NODES[n].name];
+        if (r != null && r > 0) {
+          badge.setAttribute("class", "round-badge-bg");
+          badgeText.style.opacity = "1";
+          badgeText.textContent = String(r);
+        } else {
+          badge.setAttribute("class", "round-badge-bg hidden");
+          badgeText.style.opacity = "0";
+        }
+      }
+    }
+
+    /* ---- HTML escaping ---- */
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, function(c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function escapeJson(obj) {
+      try { return escapeHtml(JSON.stringify(obj, null, 2)); }
+      catch (e) { return escapeHtml(String(obj)); }
+    }
+
+    /* ---- Render trace list ---- */
+    function renderTrace(trace) {
+      var ol = $("trace");
+      ol.innerHTML = "";
+      for (var i = 0; i < trace.length; i++) {
+        var t = trace[i];
+        var row = document.createElement("div");
+        row.className = "trace-row";
+        if (t.status === "failed") row.classList.add("failed");
+
+        var statusIcon = t.status === "completed" ? "✅" :
+                         t.status === "failed" ? "❌" :
+                         t.status === "running" ? "⏳" : "⬜";
+        var typeClass = t.node_type === "agent" ? "agent" : "tool";
+        var roundBadge = (t.round != null && t.round > 0)
+          ? '<span class="badge round">R' + escapeHtml(String(t.round)) + '</span>'
+          : "";
+        var dur = t.duration_ms != null ? escapeHtml(String(t.duration_ms)) + " ms" : "";
+
+        row.innerHTML =
+          '<div class="trace-header">' +
+            '<span class="seq">#' + escapeHtml(String(t.seq || (i + 1))) + '</span>' +
+            '<span class="status-icon">' + statusIcon + '</span>' +
+            '<span class="name">' + escapeHtml(t.node_name) + '</span>' +
+            '<span class="badge ' + typeClass + '">' + escapeHtml(t.node_type || "") + '</span>' +
+            roundBadge +
+            '<span class="duration">' + dur + '</span>' +
+            '<span class="chevron">▶</span>' +
+          '</div>' +
+          '<div class="trace-body">' +
+            '<div class="block"><div class="block-label">Input</div><pre>' + escapeJson(t.input_json) + '</pre></div>' +
+            '<div class="block"><div class="block-label">Output</div><pre>' + escapeJson(t.output_json) + '</pre></div>' +
+            (t.error ? '<div class="block"><div class="block-label">Error</div><div class="error-text">' + escapeHtml(t.error) + '</div></div>' : "") +
+            '<div class="block"><div class="block-label">Duration</div><pre>' + escapeHtml(String(t.duration_ms || "—") + ' ms') + '</pre></div>' +
+            '<div class="block"><div class="block-label">Started</div><pre>' + escapeHtml(t.started_at || "—") + '</pre></div>' +
+            '<div class="block"><div class="block-label">Finished</div><pre>' + escapeHtml(t.finished_at || "—") + '</pre></div>' +
+          '</div>';
+
+        (function(r) {
+          r.querySelector(".trace-header").addEventListener("click", function() {
+            r.classList.toggle("expanded");
+          });
+        })(row);
+
+        ol.appendChild(row);
+      }
+    }
+
+    /* ---- Render itinerary ---- */
+    function renderItinerary(itin, markdown) {
+      var out = $("itinerary");
+      out.innerHTML = "";
+
+      if (markdown) {
+        $("markdown-out").innerHTML = "<h2>Full Itinerary (Markdown)</h2><pre>" + escapeHtml(markdown) + "</pre>";
+      }
+
+      if (!itin || typeof itin !== "object") return;
+
+      if (itin.intro) {
+        var introP = document.createElement("p");
+        introP.style.cssText = "font-size:0.95rem;color:#fff;opacity:0.9;margin-bottom:1rem;";
+        introP.textContent = itin.intro;
+        out.appendChild(introP);
+      }
+
+      var days = itin.days || [];
+      for (var i = 0; i < days.length; i++) {
+        var day = days[i];
+        var card = document.createElement("div");
+        card.className = "day-card";
+
+        var headerHtml = '<div class="day-header">' +
+          '<span class="day-num">Day ' + escapeHtml(String(day.day || (i + 1))) + '</span>' +
+          '<span class="day-date">' + escapeHtml(day.date || "") + '</span>' +
+        '</div>';
+        var themeHtml = day.theme ? '<div class="day-theme">' + escapeHtml(day.theme) + '</div>' : "";
+        var introHtml = day.intro ? '<div class="day-intro">' + escapeHtml(day.intro) + '</div>' : "";
+        var loadHtml = day.load ? '<div class="day-load">Load: ' + escapeHtml(String(day.load)) + '</div>' : "";
+
+        var stopsHtml = '<ul class="stop-list">';
+        var stops = day.stops || [];
+        for (var s = 0; s < stops.length; s++) {
+          var stop = stops[s];
+          var kind = stop.kind || "stop";
+          var kindClass = kind === "meal" ? "meal" : kind === "rest" ? "rest" : "stop";
+          var unverified = stop.hours_verified === false
+            ? ' <span class="badge unverified">[unverified]</span>' : "";
+          var booking = stop.booking_required
+            ? ' <span class="badge booking">booking required</span>' : "";
+          var addrHtml = stop.address ? '<div class="stop-addr">' + escapeHtml(stop.address) + '</div>' : "";
+          var tipsHtml = stop.tips ? '<div class="stop-tips">💡 ' + escapeHtml(stop.tips) + '</div>' : "";
+
+          stopsHtml += '<li class="stop-item">' +
+            '<span class="stop-time">' + escapeHtml(stop.time || "") + '</span>' +
+            '<span class="stop-name">' + escapeHtml(stop.name || "") + '</span>' +
+            ' <span class="badge ' + kindClass + '">' + escapeHtml(kind) + '</span>' +
+            unverified + booking + addrHtml + tipsHtml;
+
+          if (stop.leg) {
+            var leg = stop.leg;
+            var legText = (leg.mode || "") + " · " + (leg.minutes != null ? leg.minutes + " min" : "");
+            stopsHtml += '<div class="leg-line">→ ' + escapeHtml(legText) + '</div>';
+          }
+          stopsHtml += '</li>';
+        }
+        stopsHtml += '</ul>';
+
+        var altHtml = "";
+        var alts = day.alternatives || [];
+        if (alts.length > 0) {
+          altHtml = '<div class="alternatives-section"><h4>Possible swaps</h4>';
+          for (var a = 0; a < alts.length; a++) {
+            var alt = alts[a];
+            var altKindClass = alt.kind === "meal" ? "meal" : alt.kind === "rest" ? "rest" : "stop";
+            altHtml += '<div class="alt-item">' +
+              '<span class="alt-name">' + escapeHtml(alt.name || "") + '</span>' +
+              ' <span class="badge ' + altKindClass + '">' + escapeHtml(alt.kind || "stop") + '</span>' +
+              '<div class="alt-tradeoff">Trade-off: ' + escapeHtml(alt.trade_off || "") + '</div>' +
+            '</div>';
+          }
+          altHtml += '</div>';
+        }
+
+        card.innerHTML = headerHtml + themeHtml + introHtml + loadHtml + stopsHtml + altHtml;
+        out.appendChild(card);
+      }
+    }
+
+    /* ---- Polling loop ---- */
+    function pollLoop() {
+      step().then(function(cont) {
+        if (cont) {
+          timer = setTimeout(pollLoop, 500);
+        } else {
+          $("start-btn").disabled = false;
+        }
+      });
+    }
+
+    async function step() {
+      try {
+        var r = await fetch("/api/planner_step", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        var data = await r.json();
+        if (!r.ok) {
+          if (data.detail && data.detail.indexOf("already completed") >= 0) {
+            await fetchAndRenderStatus();
+            return false;
+          }
+          $("error").textContent = data.detail || "Step failed.";
+          return false;
+        }
+
+        if (data.critic_round != null) criticRound = data.critic_round;
+
+        if (data.status === "completed") {
+          $("status-msg").textContent = "Completed! Rendering itinerary…";
+          await fetchAndRenderStatus();
+          return false;
+        }
+        if (data.status === "failed") {
+          $("error").textContent = "A node failed: " + ((data.result && data.result.error) ? data.result.error : "unknown error");
+          await fetchAndRenderStatus();
+          return false;
+        }
+
+        await fetchAndRenderStatus();
+        return true;
+      } catch (e) {
+        $("error").textContent = "Network error: " + (e.message || e);
+        return false;
+      }
+    }
+
+    async function fetchAndRenderStatus() {
+      try {
+        var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+        if (!r.ok) {
+          var errData = await r.json();
+          $("error").textContent = errData.detail || "Status fetch failed.";
+          return;
+        }
+        var data = await r.json();
+        criticRound = data.critic_round || 0;
+        updateGraph(data.trace || [], data.current_node, criticRound);
+        renderTrace(data.trace || []);
+        if (data.status === "completed") {
+          renderItinerary(data.itinerary_json, data.markdown);
+          $("status-msg").textContent = "Itinerary ready!";
+          $("delete-btn").style.display = "";
+        } else if (data.status === "failed") {
+          $("status-msg").textContent = "Planning failed.";
+          $("delete-btn").style.display = "";
+        } else if (data.status === "running" || data.status === "pending") {
+          $("status-msg").textContent = "Running… (node: " + (data.current_node || "—") + ")";
+        }
+      } catch (e) {
+        $("error").textContent = "Status fetch error: " + (e.message || e);
+      }
+    }
+
+    /* ---- Start button ---- */
+    $("start-btn").addEventListener("click", async function() {
+      var dest = $("dest").value.trim();
+      var startDate = $("start-date").value;
+      var numDays = parseInt($("num-days").value, 10) || 2;
+      var pinsRaw = $("pins").value.trim();
+
+      $("error").textContent = "";
+      $("status-msg").textContent = "";
+      $("trace").innerHTML = "";
+      $("itinerary").innerHTML = "";
+      $("markdown-out").innerHTML = "";
+
+      if (!dest) { $("error").textContent = "Enter a destination."; return; }
+      if (!startDate) { $("error").textContent = "Pick a start date."; return; }
+      if (!pinsRaw) { $("error").textContent = "Paste at least one pinned place."; return; }
+
+      var pins = pinsRaw.split(/\n/).map(function(l) { return l.trim(); }).filter(function(l) { return l.length > 0; });
+      if (pins.length === 0) { $("error").textContent = "Paste at least one pinned place."; return; }
+
+      $("start-btn").disabled = true;
+
+      try {
+        var r = await fetch("/api/planner_start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ destination: dest, start_date: startDate, num_days: numDays, pins: pins })
+        });
+        var data = await r.json();
+        if (!r.ok) {
+          $("error").textContent = data.detail || "Start failed.";
+          $("start-btn").disabled = false;
+          return;
+        }
+        sessionId = data.session_id;
+        history.replaceState(null, "", "?session_id=" + encodeURIComponent(sessionId));
+        $("graph-wrap").style.display = "";
+        buildGraph();
+        $("status-msg").textContent = "Session started. Running crew…";
+        $("delete-btn").style.display = "";
+        pollLoop();
+      } catch (e) {
+        $("error").textContent = "Network error: " + (e.message || e);
+        $("start-btn").disabled = false;
+      }
+    });
+
+    /* ---- Delete session ---- */
+    $("delete-btn").addEventListener("click", async function() {
+      if (!sessionId) return;
+      if (!confirm("Delete this planning session?")) return;
+      try {
+        await fetch("/api/planner_delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+      } catch (e) { /* ignore */ }
+      sessionId = null;
+      history.replaceState(null, "", location.pathname);
+      $("graph-wrap").style.display = "none";
+      $("trace").innerHTML = "";
+      $("itinerary").innerHTML = "";
+      $("markdown-out").innerHTML = "";
+      $("status-msg").textContent = "";
+      $("error").textContent = "";
+      $("delete-btn").style.display = "none";
+      $("start-btn").disabled = false;
+    });
+
+    /* ---- Refresh recovery: check for ?session_id= on page load ---- */
+    (async function() {
+      var params = new URLSearchParams(location.search);
+      var sid = params.get("session_id");
+      if (sid) {
+        sessionId = sid;
+        $("graph-wrap").style.display = "";
+        buildGraph();
+        $("delete-btn").style.display = "";
+        $("start-btn").disabled = true;
+        await fetchAndRenderStatus();
+        try {
+          var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+          if (r.ok) {
+            var data = await r.json();
+            if (data.status === "pending" || data.status === "running") {
+              pollLoop();
+            } else {
+              $("start-btn").disabled = false;
+            }
+          } else {
+            $("start-btn").disabled = false;
+          }
+        } catch (e) {
+          $("start-btn").disabled = false;
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

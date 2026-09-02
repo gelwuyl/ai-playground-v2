@@ -8,6 +8,11 @@
     { "source": "/api/interview_step", "destination": "/api/interview?action=step" },
     { "source": "/api/interview_status", "destination": "/api/interview?action=status" },
     { "source": "/api/interview_delete", "destination": "/api/interview?action=delete" },
+    { "source": "/trip-planner", "destination": "/trip-planner.html" },
+    { "source": "/api/planner_start", "destination": "/api/planner?action=start" },
+    { "source": "/api/planner_step", "destination": "/api/planner?action=step" },
+    { "source": "/api/planner_status", "destination": "/api/planner?action=status" },
+    { "source": "/api/planner_delete", "destination": "/api/planner?action=delete" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

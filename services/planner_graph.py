@@ -186,8 +186,18 @@ class PostgresSink:
                 planner_db._ensure_tables()
                 self._ensured = True
 
+            # Row is mutated, so copy — the caller may reuse the dict.
+            row = dict(row)
             with get_conn() as conn:
                 with conn.cursor() as cur:
+                    # A fresh sink is created per serverless invocation, so the
+                    # in-memory seq from advance() restarts at 0 every request.
+                    # Derive a true global order from the table instead.
+                    cur.execute(
+                        "SELECT COALESCE(MAX(seq), -1) + 1 FROM planner_trace WHERE session_id = %s",
+                        (self.session_id,),
+                    )
+                    row["seq"] = cur.fetchone()[0]
                     cur.execute(
                         """
                         INSERT INTO planner_trace

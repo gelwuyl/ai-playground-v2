@@ -1,4 +1,4 @@
-"""Tests for services.planner_ingest — deterministic, offline, no network.
+"""Tests for services.planner_ingest -- deterministic, offline, no network.
 
 All network paths are monkeypatched. save_pins is not tested here
 (it requires a live Postgres connection).
@@ -15,6 +15,7 @@ from services.planner_ingest import (
     resolve_text_pin,
     run_ingest,
     _parse_final_maps_url,
+    _geocode_fallback,
 )
 
 
@@ -107,22 +108,27 @@ class TestParseFinalMapsUrl:
         assert result["name"] == "Gardens by the Bay"
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+        assert "_coords_only" not in result
 
-    def test_coords_only_no_name(self):
+    def test_coords_only_no_name_sets_flag(self):
+        """Coords without a name return _coords_only=True so the caller
+        routes to the SerpApi geocode fallback instead of returning early."""
         url = "https://www.google.com/maps/@1.2816,103.8636,15z"
         result = _parse_final_maps_url(url)
         assert result is not None
         assert result["name"] is None
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+        assert result.get("_coords_only") is True
 
-    def test_q_with_lat_lng(self):
+    def test_q_with_lat_lng_sets_coords_only(self):
+        """maps.google.com/?q=1.2816,103.8636 -- coords but no name -> _coords_only."""
         url = "https://maps.google.com/?q=1.2816,103.8636"
         result = _parse_final_maps_url(url)
         assert result is not None
-        # q is lat,lng so name should not be set from q
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+        assert result.get("_coords_only") is True
 
     def test_q_with_name_and_ll(self):
         url = "https://maps.google.com/?q=Gardens+by+the+Bay&ll=1.2816,103.8636"
@@ -131,6 +137,7 @@ class TestParseFinalMapsUrl:
         assert result["name"] == "Gardens by the Bay"
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+        assert "_coords_only" not in result
 
     def test_no_coords_no_name_returns_none(self):
         url = "https://www.google.com/maps"
@@ -144,6 +151,87 @@ class TestParseFinalMapsUrl:
         assert result["lat"] == pytest.approx(-33.8568)
         assert result["lng"] == pytest.approx(151.2153)
         assert result["name"] == "Sydney Opera House"
+
+    def test_name_only_no_coords_returns_none(self):
+        """A URL with a /place/ name but no @lat,lng -> None so the
+        SerpApi geocode fallback can run."""
+        url = "https://www.google.com/maps/place/Gardens+by+the+Bay"
+        result = _parse_final_maps_url(url)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _geocode_fallback
+# ---------------------------------------------------------------------------
+class TestGeocodeFallback:
+    def test_geocode_succeeds_with_slug(self, monkeypatch):
+        """When the final URL has a /place/ slug, geocode_place recovers the name."""
+        serp_stub = types.ModuleType("services.planner_serp")
+        serp_stub.geocode_place = lambda query, city: {
+            "name": "Gardens by the Bay",
+            "lat": 1.2816,
+            "lng": 103.8636,
+            "address": "18 Marina Gardens Dr",
+        }
+        monkeypatch.setitem(sys.modules, "services.planner_serp", serp_stub)
+
+        result = _geocode_fallback(
+            "https://www.google.com/maps/place/Gardens+by+the+Bay",
+            "Singapore",
+            coords=None,
+        )
+        assert result is not None
+        assert result["name"] == "Gardens by the Bay"
+        assert result["lat"] == pytest.approx(1.2816)
+
+    def test_geocode_succeeds_with_coords_only(self, monkeypatch):
+        """When no slug but coords are available, geocode_place gets a lat,lng query."""
+        serp_stub = types.ModuleType("services.planner_serp")
+        serp_stub.geocode_place = lambda query, city: {
+            "name": "Some Place",
+            "lat": 1.2816,
+            "lng": 103.8636,
+            "address": "x",
+        }
+        monkeypatch.setitem(sys.modules, "services.planner_serp", serp_stub)
+
+        coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
+                  "_coords_only": True}
+        result = _geocode_fallback(
+            "https://www.google.com/maps/@1.2816,103.8636,15z",
+            "Singapore",
+            coords=coords,
+        )
+        assert result is not None
+        assert result["name"] == "Some Place"
+        assert result["lat"] == pytest.approx(1.2816)
+
+    def test_geocode_fails_returns_coords_with_none_name(self, monkeypatch):
+        """When geocode fails and coords are available, return coords with name=None."""
+        # No planner_serp in sys.modules -> import fails -> geocode skipped.
+        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+
+        coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
+                  "_coords_only": True}
+        result = _geocode_fallback(
+            "https://www.google.com/maps/@1.2816,103.8636,15z",
+            "Singapore",
+            coords=coords,
+        )
+        assert result is not None
+        assert result["name"] is None
+        assert result["lat"] == pytest.approx(1.2816)
+        assert result["lng"] == pytest.approx(103.8636)
+
+    def test_geocode_fails_no_coords_returns_none(self, monkeypatch):
+        """When geocode fails and no coords, return None."""
+        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+        result = _geocode_fallback(
+            "https://www.google.com/maps/place/Unknown",
+            "Singapore",
+            coords=None,
+        )
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +262,9 @@ class TestResolveShortLink:
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
 
-    def test_coords_only_no_name(self, monkeypatch):
-        """Final URL has @lat,lng but no /place/ segment -> name is None."""
+    def test_coords_only_no_name_falls_back_to_geocode(self, monkeypatch):
+        """Coords-only URL triggers the geocode fallback; when geocode
+        returns a name, both name and coords are returned."""
         final = "https://www.google.com/maps/@1.2816,103.8636,15z"
 
         def fake_get(url, **kwargs):
@@ -183,14 +272,45 @@ class TestResolveShortLink:
 
         monkeypatch.setattr(planner_ingest.httpx, "get", fake_get)
         monkeypatch.setattr(planner_ingest, "_use_fixtures", lambda: False)
+
+        # Stub planner_serp so geocode_place returns a name for the lat,lng query.
+        serp_stub = types.ModuleType("services.planner_serp")
+        serp_stub.USE_FIXTURES = False
+
+        def fake_geocode(query, city):
+            # geocode_place receives a "lat,lng" query when there is no slug.
+            assert "," in query, f"expected lat,lng query, got {query}"
+            return {"name": "Some Place", "lat": 1.2816, "lng": 103.8636, "address": "x"}
+
+        serp_stub.geocode_place = fake_geocode
+        monkeypatch.setitem(sys.modules, "services.planner_serp", serp_stub)
+
+        result = resolve_short_link("https://maps.app.goo.gl/abc", "Singapore")
+        assert result is not None
+        assert result["name"] == "Some Place"
+        assert result["lat"] == pytest.approx(1.2816)
+        assert result["lng"] == pytest.approx(103.8636)
+
+    def test_coords_only_no_name_geocode_fails_keeps_coords(self, monkeypatch):
+        """Coords-only URL, geocode fallback absent -> coords kept, name=None."""
+        final = "https://www.google.com/maps/@1.2816,103.8636,15z"
+
+        def fake_get(url, **kwargs):
+            return FakeResp(url=final)
+
+        monkeypatch.setattr(planner_ingest.httpx, "get", fake_get)
+        monkeypatch.setattr(planner_ingest, "_use_fixtures", lambda: False)
+        # No planner_serp module -> geocode fallback fails -> coords kept.
+        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+
         result = resolve_short_link("https://maps.app.goo.gl/abc", "Singapore")
         assert result is not None
         assert result["name"] is None
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
 
-    def test_q_lat_lng(self, monkeypatch):
-        """maps.google.com/?q=lat,lng shape."""
+    def test_q_lat_lng_falls_back_to_geocode(self, monkeypatch):
+        """maps.google.com/?q=1.2816,103.8636 shape -> coords-only -> geocode fallback."""
         final = "https://maps.google.com/?q=1.2816,103.8636"
 
         def fake_get(url, **kwargs):
@@ -198,13 +318,21 @@ class TestResolveShortLink:
 
         monkeypatch.setattr(planner_ingest.httpx, "get", fake_get)
         monkeypatch.setattr(planner_ingest, "_use_fixtures", lambda: False)
+
+        serp_stub = types.ModuleType("services.planner_serp")
+        serp_stub.USE_FIXTURES = False
+        serp_stub.geocode_place = lambda query, city: {
+            "name": "Some Place", "lat": 1.2816, "lng": 103.8636, "address": "x",
+        }
+        monkeypatch.setitem(sys.modules, "services.planner_serp", serp_stub)
+
         result = resolve_short_link("https://maps.app.goo.gl/abc", "Singapore")
         assert result is not None
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
 
     def test_redirect_chain_location_header(self, monkeypatch):
-        """URL has no @ but Location header does — use the header."""
+        """URL has no @ but Location header does -- use the header."""
         final_no_coords = "https://maps.app.goo.gl/redirect"
         location_header = "https://www.google.com/maps/place/Gardens+by+the+Bay/@1.2816,103.8636,15z"
 
@@ -226,10 +354,16 @@ class TestResolveShortLink:
 
     def test_use_fixtures_path(self, monkeypatch):
         """USE_FIXTURES path via planner_serp + planner_fixtures stubs."""
+        import services
+
         # Stub planner_serp module with USE_FIXTURES=True
         serp_stub = types.ModuleType("services.planner_serp")
         serp_stub.USE_FIXTURES = True
         monkeypatch.setitem(sys.modules, "services.planner_serp", serp_stub)
+        # Also bind on the package: once the REAL submodule has been imported
+        # elsewhere, `from services import planner_serp` reads the package
+        # attribute and bypasses the sys.modules stub.
+        monkeypatch.setattr(services, "planner_serp", serp_stub, raising=False)
 
         # Stub planner_fixtures with FIXTURE_SHORT_LINKS
         fixtures_stub = types.ModuleType("services.planner_fixtures")
@@ -240,6 +374,7 @@ class TestResolveShortLink:
             ),
         }
         monkeypatch.setitem(sys.modules, "services.planner_fixtures", fixtures_stub)
+        monkeypatch.setattr(services, "planner_fixtures", fixtures_stub, raising=False)
 
         # _use_fixtures should pick up USE_FIXTURES from the stub
         assert planner_ingest._use_fixtures() is True
@@ -260,7 +395,7 @@ class TestResolveShortLink:
         fixtures_stub.FIXTURE_SHORT_LINKS = {}
         monkeypatch.setitem(sys.modules, "services.planner_fixtures", fixtures_stub)
 
-        # httpx.get should NOT be called in fixtures mode — but if it is,
+        # httpx.get should NOT be called in fixtures mode -- but if it is,
         # it would fail. We prevent that by asserting it wasn't called.
         call_count = {"n": 0}
 
@@ -371,7 +506,7 @@ class TestResolveTextPin:
 
 
 # ---------------------------------------------------------------------------
-# run_ingest (orchestration, no DB — save_pins monkeypatched)
+# run_ingest (orchestration, no DB -- save_pins monkeypatched)
 # ---------------------------------------------------------------------------
 class TestRunIngest:
     def test_mixed_pins_resolved(self, monkeypatch):
@@ -490,3 +625,35 @@ class TestRunIngest:
         assert result["pins_resolved"] == 0
         assert result["failed"] == []
         assert ctx["pins"] == []
+
+    # --- Regression: coords-but-no-name must not be silently resolved ---
+    def test_coords_only_pin_not_resolved_with_error(self, monkeypatch):
+        """A short-link pin that resolves to coords but no name must persist
+        with resolved=False, a human-readable resolve_error, and the coords
+        kept -- never silently resolved=True with the URL as the name."""
+        monkeypatch.setattr(planner_ingest, "save_pins", lambda sid, pins: None)
+        monkeypatch.setattr(planner_ingest, "_use_fixtures", lambda: False)
+
+        # resolve_short_link returns coords with name=None (coords-only case).
+        monkeypatch.setattr(
+            planner_ingest,
+            "resolve_short_link",
+            lambda url, city: {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None},
+        )
+
+        ctx = {
+            "session_id": "test-coords-only",
+            "destination": "Singapore",
+            "payload": {"pins": [{"source": "short_link", "raw_input": "https://maps.app.goo.gl/abc"}]},
+        }
+        result = run_ingest(ctx)
+        assert result["pins_total"] == 1
+        assert result["pins_resolved"] == 0
+        assert result["failed"] == ["https://maps.app.goo.gl/abc"]
+        pin = ctx["pins"][0]
+        assert pin["resolved"] is False
+        assert pin["lat"] == pytest.approx(1.2816)
+        assert pin["lng"] == pytest.approx(103.8636)
+        assert pin["resolve_error"] == "coords found but name unresolved"
+        # name falls back to raw_input (the URL), not a real place name.
+        assert pin["name"] == "https://maps.app.goo.gl/abc"

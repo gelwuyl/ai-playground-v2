@@ -361,18 +361,22 @@ def _balance(
     for _ in range(max_passes):
         loads = [_day_load(d) for d in days]
         non_zero = [l for l in loads if l > 0]
-        if len(non_zero) <= 1:
-            break
-        max_load = max(loads)
-        min_load = min(l for l in loads if l > 0)
+        max_load = max(loads) if loads else 0
         if max_load <= 0:
             break
-        if max_load <= min_load * BALANCE_RATIO:
-            break
+        # Only break early when every day has load > 0 AND the ratio is satisfied.
+        # An empty day (load 0) means we must still distribute pins to it.
+        if len(non_zero) == len(loads):
+            min_load = min(non_zero)
+            if max_load <= min_load * BALANCE_RATIO:
+                break
+            min_load = min(l for l in loads if l > 0)
+        else:
+            min_load = min(l for l in loads if l > 0) if non_zero else 0
 
         heavy_idx = loads.index(max_load)
         light_indices = [i for i in range(num_days) if loads[i] > 0 and i != heavy_idx]
-        # If all non-heavy days have 0 load, target the first one.
+        # If all non-heavy days have 0 load, target the empty days.
         if not light_indices:
             light_indices = [i for i in range(num_days) if loads[i] == 0 and i != heavy_idx]
             if not light_indices:
@@ -565,10 +569,13 @@ def _slot_day(
 
         earliest = max(cursor + leg_min, DAY_START_MIN)
 
-        # Try to fit in an interval: find the earliest interval where
-        # [earliest, earliest+dwell] fits entirely.
+        # Try to fit in an interval: prefer the LONGEST interval that fits
+        # (then earliest start for determinism). The brief says the stop goes
+        # in the longest interval of that day.
         placed = False
-        for iv_open, iv_close in sorted(intervals, key=lambda iv: (iv[0], iv[1])):
+        for iv_open, iv_close in sorted(
+            intervals, key=lambda iv: (iv[1] - iv[0], iv[0]), reverse=True
+        ):
             start = max(earliest, iv_open)
             end = start + dwell
             if end <= iv_close:
@@ -582,6 +589,7 @@ def _slot_day(
                 })
                 cursor = end
                 placed = True
+                break
                 break
 
         if not placed:
@@ -621,22 +629,22 @@ def _find_gap(
     return None
 
 
-def _insert_meal_generic(slots: list[dict]) -> list[dict]:
+def _insert_meal_generic(
+    slots: list[dict], day_index: int, repairs: list[str]
+) -> list[dict]:
     """Insert a generic 60-min meal slot at 12:00 or the nearest free window.
 
-    Tries 12:00 first, then searches 11:00-14:00 in 15-min increments.
-    If no gap exists in that range, inserts at 12:00 anyway (overlaps are
-    acceptable for meals — they are advisory, not hard constraints).
+    Searches 11:00-14:00 for a non-overlapping 60-min gap.  If no gap
+    exists, does NOT insert a meal (an overlapping advisory slot is worse
+    than an explicit note) — instead appends a repairs note and returns
+    the slots unchanged.
     """
-    meal_start = 12 * 60  # 720
-    meal_end = meal_start + MEAL_DURATION
-
-    # Check if 12:00-13:00 is free.
     gap = _find_gap(slots, MEAL_DURATION, 11 * 60, 14 * 60)
-    if gap is not None:
-        meal_start, meal_end = gap
-    # If no gap, just insert at 12:00 (advisory overlap is acceptable).
+    if gap is None:
+        repairs.append(f"no room for meal slot on day {day_index + 1}")
+        return list(slots)
 
+    meal_start, meal_end = gap
     new_slots = list(slots)
     new_slots.append({
         "pin_id": None,
@@ -650,15 +658,19 @@ def _insert_meal_generic(slots: list[dict]) -> list[dict]:
     return new_slots
 
 
-def _insert_rest(slots: list[dict]) -> list[dict]:
-    """Insert a 30-min rest slot in the 13:30-16:00 zone."""
+def _insert_rest(
+    slots: list[dict], day_index: int, repairs: list[str]
+) -> list[dict]:
+    """Insert a 30-min rest slot in the 13:30-16:00 zone.
+
+    If no gap exists, appends a repairs note and returns slots unchanged.
+    """
     gap = _find_gap(slots, REST_DURATION, 13 * 60 + 30, 16 * 60)
-    if gap is not None:
-        rest_start, rest_end = gap
-    else:
-        # Fallback: insert at 14:00 (advisory).
-        rest_start = 14 * 60
-        rest_end = rest_start + REST_DURATION
+    if gap is None:
+        repairs.append(f"no room for rest slot on day {day_index + 1}")
+        return list(slots)
+
+    rest_start, rest_end = gap
     new_slots = list(slots)
     new_slots.append({
         "pin_id": None,
@@ -738,11 +750,11 @@ def _schedule_day(
             slots.sort(key=lambda s: (s["start_min"], s.get("pin_id") or ""))
         else:
             # Generic meal insertion at 12:00 or nearest free window.
-            slots = _insert_meal_generic(slots)
+            slots = _insert_meal_generic(slots, day_index, repairs)
 
         # Rest insertion for heavy days.
         if total_load > REST_THRESHOLD_MIN:
-            slots = _insert_rest(slots)
+            slots = _insert_rest(slots, day_index, repairs)
 
     return slots, unplaced
 

@@ -223,6 +223,43 @@ class TestBalance:
         # Should not crash; MB3 must be on day 1 (Tue).
         assert result["unplaced"] == [], f"Unexpected unplaced: {result['unplaced']}"
 
+    def test_all_same_neighborhood_distributes_across_days(self):
+        """5 pins all sharing a neighborhood, 2-day trip -> pins spread
+        across both days, not all dumped on one day.
+
+        Regression: the balance guard `len(non_zero) <= 1: break` used to
+        fire when all pins clustered to one day, leaving the other day
+        empty. Now the balance loop must fill the empty day.
+        """
+        # Dwell 120 min, 09:00-17:00 hours (480 min): up to 3 stops fit
+        # on one day (360 < 480), so 3/2 split is feasible.
+        pins = [
+            make_pin("p1", "A", 0, 1.28, 103.85, "Central", dwell=120, hours=hours_9to5()),
+            make_pin("p2", "B", 1, 1.29, 103.86, "Central", dwell=120, hours=hours_9to5()),
+            make_pin("p3", "C", 2, 1.30, 103.87, "Central", dwell=120, hours=hours_9to5()),
+            make_pin("p4", "D", 3, 1.31, 103.88, "Central", dwell=120, hours=hours_9to5()),
+            make_pin("p5", "E", 4, 1.32, 103.89, "Central", dwell=120, hours=hours_9to5()),
+        ]
+        legs = [make_leg("A", "B", "walk", 5)]
+        result = schedule_trip(pins, legs, "2026-09-07", 2)
+
+        # Both days must have at least one stop.
+        stops_d0 = [s for s in result["days"][0]["slots"] if s["kind"] == "stop"]
+        stops_d1 = [s for s in result["days"][1]["slots"] if s["kind"] == "stop"]
+        assert len(stops_d0) > 0, f"Day 0 has no stops: {result['days'][0]}"
+        assert len(stops_d1) > 0, f"Day 1 has no stops: {result['days'][1]}"
+
+        # Load ratio should be <= 1.5x.
+        loads = result["stats"]["daily_loads"]
+        if len(loads) >= 2:
+            ratio = max(loads) / min(loads)
+            assert ratio <= BALANCE_RATIO, (
+                f"Load ratio {ratio} exceeds {BALANCE_RATIO}: loads={loads}"
+            )
+
+        # No pins should be unplaced (all are open 09-17 every day).
+        assert result["unplaced"] == [], f"Unexpected unplaced: {result['unplaced']}"
+
 
 # ---------------------------------------------------------------------------
 # Ordering tests
@@ -359,6 +396,39 @@ class TestSlotting:
         stop_slots = [s for s in result["days"][0]["slots"] if s["kind"] == "stop"]
         assert len(stop_slots) == 0
 
+    def test_longest_interval_preferred_over_earliest(self):
+        """A stop that fits in both a short early interval and a longer later
+        one must land in the longer interval.
+
+        Regression: the old code sorted intervals earliest-first and took
+        the first fit, which would place the stop in the short early
+        interval instead of the longer later one.
+        """
+        # Intervals: 09:00-11:00 (120 min) + 13:00-17:00 (240 min).
+        # Dwell 90 fits in both. Longest is 13:00-17:00 (240 min).
+        two_interval_hours = {
+            "days": {
+                str(d): [
+                    {"open": "09:00", "close": "11:00"},    # 120 min
+                    {"open": "13:00", "close": "17:00"},   # 240 min (longest)
+                ]
+                for d in range(7)
+            }
+        }
+        pins = [
+            make_pin("p1", "Dual Interval Place", 0, 1.30, 103.85, dwell=90,
+                     hours=two_interval_hours),
+        ]
+        result = schedule_trip(pins, [], "2026-09-07", 1)
+        slots = [s for s in result["days"][0]["slots"] if s["kind"] == "stop"]
+        assert len(slots) == 1
+        slot = slots[0]
+        # Must be in the 13:00-17:00 interval (240 min), NOT the 09:00-11:00 (120 min).
+        assert slot["start_min"] >= 780, (
+            f"Expected start >= 13:00 (780) in longest interval, got {slot['start_min']}"
+        )
+        assert slot["end_min"] <= 1020
+
     def test_no_violation_of_hours_ever(self):
         """Multiple stops with tight hours — none should violate."""
         pins = [
@@ -447,7 +517,26 @@ class TestMealsRest:
 
     def test_long_day_gets_meal(self):
         """A day with span >= 6h gets a meal slot."""
-        # Two stops, each 3h, starting at 09:00 -> span >= 6h.
+        # Two 3h stops with a 60-min leg so a 60-min gap exists around noon.
+        # Stop A: 09:00-12:00 (540-720), leg 60, Stop B: 13:00-16:00 (780-960).
+        # Span = 420 min >= 360. Gap 720-780 = 60 min for the meal.
+        long_hours = {
+            "days": {str(d): [{"open": "08:00", "close": "20:00"}] for d in range(7)}
+        }
+        pins = [
+            make_pin("p1", "Long Visit A", 0, 1.28, 103.85, dwell=180, hours=long_hours),
+            make_pin("p2", "Long Visit B", 1, 1.29, 103.86, dwell=180, hours=long_hours),
+        ]
+        legs = [make_leg("Long Visit A", "Long Visit B", "drive", 60)]
+        result = schedule_trip(pins, legs, "2026-09-07", 1)
+        meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
+        assert len(meals) >= 1, f"Expected at least 1 meal slot, got {result['days'][0]['slots']}"
+
+    def test_no_meal_gap_gets_repairs_note(self):
+        """When no free 60-min gap exists around noon, no meal is inserted
+        and a repairs note is added instead."""
+        # Two 3h stops in 09:00-17:00 hours: A at 540-720, B at 735-915.
+        # No 60-min gap exists in the 11:00-14:00 window.
         pins = [
             make_pin("p1", "Long Visit A", 0, 1.28, 103.85, dwell=180, hours=hours_9to5()),
             make_pin("p2", "Long Visit B", 1, 1.29, 103.86, dwell=180, hours=hours_9to5()),
@@ -455,7 +544,9 @@ class TestMealsRest:
         legs = [make_leg("Long Visit A", "Long Visit B", "walk", 15)]
         result = schedule_trip(pins, legs, "2026-09-07", 1)
         meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
-        assert len(meals) >= 1, f"Expected at least 1 meal slot, got {result['days'][0]['slots']}"
+        assert len(meals) == 0, f"Expected no meal slot (no gap), got meals: {meals}"
+        repair_text = " ".join(result["repairs"])
+        assert "no room for meal slot" in repair_text
 
     def test_short_day_no_meal(self):
         """A short day (< 6h span) gets no meal slot."""
@@ -468,19 +559,19 @@ class TestMealsRest:
 
     def test_heavy_day_gets_rest(self):
         """A day with load > 8h (480 min) gets a rest slot."""
-        # Three stops, each 3h = 540 min total load > 480.
-        # Use 12h hours (08:00-20:00) so all three fit.
+        # Three stops with dwell 170 each = 510 min total load > 480.
+        # Use 30-min legs so a 30-min gap exists in the 13:30-16:00 rest zone.
         long_hours = {
             "days": {str(d): [{"open": "08:00", "close": "20:00"}] for d in range(7)}
         }
         pins = [
-            make_pin("p1", "Heavy A", 0, 1.28, 103.85, dwell=180, hours=long_hours),
-            make_pin("p2", "Heavy B", 1, 1.29, 103.86, dwell=180, hours=long_hours),
-            make_pin("p3", "Heavy C", 2, 1.30, 103.87, dwell=180, hours=long_hours),
+            make_pin("p1", "Heavy A", 0, 1.28, 103.85, dwell=170, hours=long_hours),
+            make_pin("p2", "Heavy B", 1, 1.29, 103.86, dwell=170, hours=long_hours),
+            make_pin("p3", "Heavy C", 2, 1.30, 103.87, dwell=170, hours=long_hours),
         ]
         legs = [
-            make_leg("Heavy A", "Heavy B", "walk", 15),
-            make_leg("Heavy B", "Heavy C", "walk", 15),
+            make_leg("Heavy A", "Heavy B", "drive", 30),
+            make_leg("Heavy B", "Heavy C", "drive", 30),
         ]
         result = schedule_trip(pins, legs, "2026-09-07", 1)
         rests = [s for s in result["days"][0]["slots"] if s["kind"] == "rest"]
