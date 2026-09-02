@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mr. Bounce — Build Progress</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #1f2933; margin: 2rem; line-height: 1.5; }
+  h1 { font-size: 1.5rem; } h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; max-width: 900px; }
+  th, td { border: 1px solid #d7dde3; padding: 0.45rem 0.7rem; text-align: left; font-size: 0.92rem; }
+  th { background: #eef1f4; }
+  .pass { color: #16a34a; font-weight: 600; } .fail { color: #dc2626; font-weight: 600; }
+  .building { color: #b45309; font-weight: 600; } .pending { color: #64748b; }
+  .meta { color: #52606d; font-size: 0.85rem; }
+  ul { max-width: 900px; }
+</style>
+</head>
+<body>
+<h1>🧭 Mr. Bounce — Trip Orchestrator (feat/travel-planner-orchestrator)</h1>
+<p class="meta">Builder branch live progress · updated 2026-09-03 · 7-node crew: Ingest → Scout → Logistics → Scheduler → Critic → Alternatives → Compiler (Critic fail loops back to Scheduler, max 3 rounds)</p>
+
+<h2>Components vs critics</h2>
+<table>
+  <tr><th>Component</th><th>Builder</th><th>Critic (opus, fresh ctx)</th><th>Status</th></tr>
+  <tr><td>Foundations: sql/005 + planner_db + planner_types</td><td>lead</td><td>— (scaffolding)</td><td class="pass">committed</td></tr>
+  <tr><td>Scheduler solver (objective cascade)</td><td class="pending">queued (opus)</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Graph engine + planner_graph.yaml + trace</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Ingest tool (short links + text pins)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Logistics tool + leg cache</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>SerpApi client + fixtures (data foundation)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>LLM agents (Scout, Critic, Alternatives, Compiler)</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>api/planner.py dispatcher + vercel.json</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Frontend: trip-planner.html + index card + docs</td><td class="pending">queued</td><td class="pending">queued</td><td class="pending">pending</td></tr>
+  <tr><td>Integration: tests green + real E2E</td><td>lead</td><td>—</td><td class="pending">pending</td></tr>
+</table>
+
+<h2>Known environment gaps</h2>
+<ul>
+  <li><strong>SERPAPI_KEY missing from worktree .env</strong> — .env has DATABASE_URL + OPENROUTER_API_KEY only. SerpApi-dependent code honors <code>USE_FIXTURES=1</code> (repo pattern); local E2E will run with fixture SerpApi data + real LLM + real Postgres. Flag for orchestrator: production SerpApi key needed for quality-bar item 2.</li>
+  <li>Local Postgres 17.10 reachable at localhost:5432/llm_question_log — planner_* tables self-heal via _ensure_tables.</li>
+</ul>
+</body>
+</html>
