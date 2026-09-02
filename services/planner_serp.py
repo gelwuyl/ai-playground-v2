@@ -135,7 +135,7 @@ def geocode_place(name: str, city: str) -> dict | None:
             if results:
                 break
         if not results:
-            LAST_ERROR = f"no local_results for {name!r} (with and without city bias)"
+            LAST_ERROR = f"no results for {name!r}; response keys: {sorted(data.keys())}"
             return None
         r = results[0]
         gps = r.get("gps_coordinates") or {}
