@@ -59,6 +59,7 @@ nodes:
     terminal: true
 edges:
   # Conditional edges first (evaluated in order), then the fallback edges.
+  - {from: reasoner, to: reasoner, when: _logistics_pending, counter: logistics_round, max_rounds: 12}
   - {from: reasoner, to: scout, when: re_research, counter: re_research_round, max_rounds: 1, back: reasoner}
   - {from: reasoner, to: alternatives, when: consult_alternatives, counter: consult_round, max_rounds: 1, back: reasoner}
   - {from: scout, to: reasoner}

@@ -30,6 +30,7 @@ import socket
 from urllib.parse import urlparse
 
 import services.planner_types as pt
+from services.planner_osrm import osrm_directions
 
 # Observability counter: incremented on each real (non-fixture) SerpApi call.
 _serp_calls_made = 0
@@ -316,8 +317,11 @@ def get_leg(a: str, b: str, city: str,
 
     # ---- Fetch real durations from SerpApi ----
 
-    # Walk
-    walk_result = _serp_directions(a, b, "walking", city)
+    # Walk — OSRM first (free, no key), SerpApi as fallback.
+    walk_result = osrm_directions(lat_a, lng_a, lat_b, lng_b, "walking")
+    _mode_source = "osrm" if walk_result else None
+    if walk_result is None:
+        walk_result = _serp_directions(a, b, "walking", city)
     if walk_result and walk_result.get("minutes") is not None:
         walk_minutes = walk_result["minutes"]
         if walk_result.get("distance_km") is not None:
@@ -366,7 +370,9 @@ def get_leg(a: str, b: str, city: str,
                 distance_km = t_km
             estimated = True
 
-    drive_result = _serp_directions(a, b, "driving", city)
+    drive_result = osrm_directions(lat_a, lng_a, lat_b, lng_b, "driving")
+    if drive_result is None:
+        drive_result = _serp_directions(a, b, "driving", city)
     if drive_result and drive_result.get("minutes") is not None:
         drive_minutes = drive_result["minutes"]
         if drive_result.get("distance_km") is not None:
@@ -490,17 +496,114 @@ def compute_legs(ctx: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Node wrapper: run_logistics
 # ---------------------------------------------------------------------------
-def run_logistics(ctx: dict) -> dict:
-    """Logistics node entry point for the graph runner.
+# Max live directions fetches per single invocation. The all-pairs fan-out
+# for a week-scale, multi-city trip can need dozens of fetches; one Vercel
+# invocation cannot run them all inside its time budget. run_logistics
+# processes at most this many uncached legs per call, persists progress in
+# ctx["legs"] (rehydrated by the api layer), and reports remaining work via
+# "pending_legs" so the graph can revisit the logistics step.
+LOGISTICS_BATCH_LIMIT = 8
 
-    Computes all-pairs leg times, stores them in ctx["legs"], and returns
-    a summary dict with counts. Never raises.
+
+def run_logistics(ctx: dict) -> dict:
+    """Logistics node entry point for the graph runner (batched + resumable).
+
+    Computes leg times for every unordered pair of resolved pins. Legs
+    already present in ctx["legs"] (from a prior invocation) are reused;
+    at most LOGISTICS_BATCH_LIMIT uncached legs are fetched per call.
+    Returns a summary whose "pending_legs" > 0 tells the runner there is
+    more to do. Never raises.
     """
-    legs = compute_legs(ctx)
+    pins = ctx.get("pins", [])
+    city = ctx.get("destination", "")
+
+    # Deterministic usable-pins list (same filter/dedupe as compute_legs).
+    seen = {}
+    usable = []
+    for pin in pins:
+        if not pin.get("resolved"):
+            continue
+        name = (pin.get("name") or "").strip()
+        if not name:
+            continue
+        norm = pt.normalize_place_name(name)
+        if norm in seen:
+            continue
+        seen[norm] = True
+        usable.append(pin)
+    usable.sort(key=lambda p: p.get("seq", 0))
+
+    # Pair list in deterministic order.
+    pairs = []
+    for i in range(len(usable)):
+        for j in range(i + 1, len(usable)):
+            pairs.append((usable[i], usable[j]))
+
+    # Resume: legs already computed in earlier invocations, keyed by pair.
+    prior = ctx.get("legs") or []
+    have = set()
+    legs = []
+    for leg in prior:
+        key = pt.leg_cache_key(leg.get("from_name", ""), leg.get("to_name", ""))
+        have.add(key)
+        legs.append(leg)
+
+    fetched = 0
+    for pin_i, pin_j in pairs:
+        a, b = pin_i["name"], pin_j["name"]
+        key = pt.leg_cache_key(a, b)
+        if key in have:
+            continue
+        if fetched >= LOGISTICS_BATCH_LIMIT:
+            break
+        try:
+            leg = get_leg(
+                a, b, city,
+                lat_a=pin_i.get("lat"), lng_a=pin_i.get("lng"),
+                lat_b=pin_j.get("lat"), lng_b=pin_j.get("lng"),
+                use_cache=True,
+            )
+        except Exception as e:
+            print(f"[planner_logistics] Per-leg error for ({a}, {b}): "
+                  f"{type(e).__name__}: {e}")
+            lat_a, lng_a = pin_i.get("lat"), pin_i.get("lng")
+            lat_b, lng_b = pin_j.get("lat"), pin_j.get("lng")
+            if None not in (lat_a, lng_a, lat_b, lng_b):
+                km = pt.haversine_km(lat_a, lng_a, lat_b, lng_b)
+                est_min = pt.estimated_minutes("drive", km)
+                leg = {
+                    "from_name": a, "to_name": b,
+                    "walk_minutes": None, "transit_minutes": None,
+                    "drive_minutes": est_min, "distance_km": km,
+                    "estimated": True, "chosen_mode": "drive",
+                    "chosen_minutes": est_min,
+                }
+            else:
+                leg = {
+                    "from_name": a, "to_name": b,
+                    "walk_minutes": None, "transit_minutes": None,
+                    "drive_minutes": 45, "distance_km": None,
+                    "estimated": True, "chosen_mode": "drive",
+                    "chosen_minutes": 45,
+                }
+        legs.append(leg)
+        have.add(key)
+        fetched += 1
+
     ctx["legs"] = legs
+
+    # Remaining pairs not yet computed (cache hits still count as done).
+    pending = 0
+    for pin_i, pin_j in pairs:
+        if pt.leg_cache_key(pin_i["name"], pin_j["name"]) not in have:
+            pending += 1
+
     estimated_count = sum(1 for leg in legs if leg.get("estimated"))
     return {
         "legs_count": len(legs),
+        "leg_pairs_total": len(pairs),
+        "fetched_this_round": fetched,
+        "pending_legs": pending,
         "serp_calls": _serp_calls_made,
         "estimated_legs": estimated_count,
         "serp_errors": list(_serp_errors),

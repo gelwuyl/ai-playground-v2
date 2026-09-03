@@ -66,6 +66,7 @@ _ROUND_COUNTER_KEYS = (
     "critic_round",
     "re_research_round",
     "consult_round",
+    "logistics_round",
 )
 
 

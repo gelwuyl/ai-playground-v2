@@ -117,6 +117,21 @@ def _infer_source(text: str) -> str:
     return "short_link" if text.startswith(("http://", "https://")) else "text"
 
 
+def _looks_like_prose(text: str) -> bool:
+    """Heuristic: a 'text' pin that is actually a sentence (user prose) rather
+    than a place name. Geocoding prose produces city-boundary junk pins, so
+    the ingest skips it with an explicit reason instead."""
+    t = text.strip()
+    if len(t) > 80:
+        return True
+    words = t.split()
+    if len(words) > 12:
+        return True
+    if ". " in t and not t.replace(".", "").isdigit():
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Short-link resolution
 # ---------------------------------------------------------------------------
@@ -141,7 +156,8 @@ def _parse_final_maps_url(url: str) -> dict | None:
     if place_match:
         name = urllib.parse.unquote_plus(place_match.group(1))
 
-    # Try maps.google.com/?q=<...>&ll=lat,lng or ?q=lat,lng
+    # Try maps.google.com/?q=<...>&ll=lat,lng or ?q=lat,lng (also the
+    # maps.search api=1 form: query=lat,lng)
     if lat is None or lng is None:
         ll_match = re.search(r"[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)", url)
         if ll_match:
@@ -150,7 +166,7 @@ def _parse_final_maps_url(url: str) -> dict | None:
 
     # If there's a ?q= parameter but no /place/ name, try to extract a name from q.
     if name is None:
-        q_match = re.search(r"[?&]q=([^&]+)", url)
+        q_match = re.search(r"[?&](?:q|query)=([^&]+)", url)
         if q_match:
             q_val = urllib.parse.unquote_plus(q_match.group(1))
             # If q looks like "lat,lng" don't use it as a name -- but do parse coords.
@@ -398,6 +414,14 @@ def run_ingest(ctx: dict) -> dict:
         resolved_data: dict | None = None
         resolve_error: str | None = None
         try:
+            if (spec["source"] == "text" and _looks_like_prose(spec["raw_input"])):
+                failed.append(spec["raw_input"])
+                failed_details.append({
+                    "raw_input": spec["raw_input"],
+                    "source": spec["source"],
+                    "error": "looks like prose, not a place name — skipped; paste one place per line",
+                })
+                continue
             if spec["source"] == "short_link":
                 resolved_data = resolve_short_link(spec["raw_input"], city)
             else:

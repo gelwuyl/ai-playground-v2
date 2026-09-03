@@ -450,6 +450,7 @@ class handler(VercelHandler):
             "critic_round": critic_round or 0,
             "re_research_round": 0,
             "consult_round": 0,
+            "logistics_round": 0,
             "_back_to": None,
             "current_node": current_node,
             "errors": [],
@@ -495,7 +496,8 @@ class handler(VercelHandler):
                 # back marker live in ctx (mutated by the runner AFTER the
                 # node function returns, persisted via _persist_round_counters).
                 for key in ("reasoner_round", "critic_round",
-                            "re_research_round", "consult_round", "_back_to"):
+                            "re_research_round", "consult_round",
+                            "logistics_round", "_back_to"):
                     if key in saved_ctx and saved_ctx[key] is not None:
                         ctx[key] = saved_ctx[key]
                 # Take the first (most recent) ok row's _ctx — but we want

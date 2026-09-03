@@ -954,8 +954,25 @@ def run_reasoner(ctx: dict) -> dict:
 
     # Tool: logistics once per turn — the travel matrix does not change
     # between drafts (drop directives leave the unused legs in place but the
-    # scheduler only consumes legs between scheduled stops).
-    call_tool("logistics")
+    # scheduler only consumes legs between scheduled stops). Long trips
+    # batch: the tool fetches a limited number of legs per call; if work
+    # remains, return a "working" result so the runner re-enters this node
+    # (bounded by the re-research budget) instead of drafting on a partial
+    # travel matrix.
+    logistics_out = call_tool("logistics")
+    pending = int((logistics_out or {}).get("pending_legs") or 0)
+    if pending > 0:
+        working = {
+            "verdict": "ISSUES",
+            "issues": [{"day_index": 0, "severity": "low",
+                        "message": f"Collecting travel times: {pending} leg(s) remaining."}],
+            "directives": [],
+            "re_research": "",
+            "consult_alternatives": False,
+            "_logistics_pending": pending,
+        }
+        ctx["reasoner"] = working
+        return working
 
     # If a prior consult already suggested swaps, honour them on the first
     # draft (drop frees a slot; the cascade re-places the added pin).
