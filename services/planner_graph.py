@@ -340,6 +340,12 @@ def _make_tool_caller(
         started_at = datetime.now(timezone.utc).isoformat()
         started_dt = datetime.now(timezone.utc)
         input_snap = _node_input_snapshot(ctx)
+        if kwargs:
+            input_snap["tool_args"] = {
+                k: (v if isinstance(v, (int, float, str, bool, type(None)))
+                    else f"<{type(v).__name__} n={len(v) if hasattr(v, '__len__') else '?'}>")
+                for k, v in kwargs.items()
+            }
         round_num = ctx.get(round_key, 0) if round_key else 0
 
         output: dict

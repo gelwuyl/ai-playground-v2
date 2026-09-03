@@ -27,7 +27,7 @@ from services.vercel_handler import VercelHandler
 # ---------------------------------------------------------------------------
 _CTX_KEYS = (
     "pins", "research", "legs", "schedule",
-    "critic", "alternatives", "itinerary", "errors",
+    "reasoner", "alternatives", "itinerary", "errors",
 )
 
 
@@ -140,7 +140,7 @@ class handler(VercelHandler):
                     INSERT INTO planner_sessions
                         (destination, start_date, num_days, raw_input,
                          status, current_node, critic_round)
-                    VALUES (%s, %s, %s, %s, 'pending', 'ingest', 0)
+                    VALUES (%s, %s, %s, %s, 'pending', 'scout', 0)
                     RETURNING session_id
                     """,
                     (
@@ -205,13 +205,13 @@ class handler(VercelHandler):
                 raw_input, current_node, critic_round,
             )
 
-            # --- build registry ---
-            registry = build_registry()
+            # --- build registry + agent tools ---
+            registry, tools = build_registry()
 
             # --- run one node ---
             from services.planner_graph import advance, PostgresSink
             sink = PostgresSink(session_id)
-            row = advance(ctx, registry, sink)
+            row = advance(ctx, registry, sink, tools=tools)
 
             # --- update session ---
             new_node = ctx.get("current_node")
@@ -494,18 +494,19 @@ class handler(VercelHandler):
 # Registry builder — lazy imports so the module loads even if some
 # downstream modules (planner_agents) are momentarily absent.
 # ---------------------------------------------------------------------------
-def build_registry() -> dict:
-    """Return {node_name: callable(ctx) -> dict} with _ctx-injecting wrappers."""
+def build_registry() -> tuple[dict, dict]:
+    """Return (registry, tools): node callables with _ctx-injecting wrappers,
+    plus the agent-owned tools dict for the runner."""
     import services.planner_ingest as _ingest
     import services.planner_logistics as _logistics
     import services.planner_scheduler as _scheduler
 
     # --- planner_agents (guarded) ---
-    _scout = _critic = _alternatives = _compiler = None
+    _scout = _reasoner = _alternatives = _compiler = None
     try:
         from services import planner_agents
         _scout = planner_agents.run_scout
-        _critic = planner_agents.run_critic
+        _reasoner = planner_agents.run_reasoner
         _alternatives = planner_agents.run_alternatives
         _compiler = planner_agents.run_compiler
     except ImportError:
@@ -536,7 +537,7 @@ def build_registry() -> dict:
             return result
         return _wrapped
 
-    def _run_scheduler_adapter(ctx: dict) -> dict:
+    def _run_scheduler_adapter(ctx: dict, directives=None) -> dict:
         """Adapt ctx-based calling to planner_scheduler.run_schedule signature.
 
         run_schedule takes (pins, legs, start_date, num_days) — explicit args,
@@ -589,18 +590,22 @@ def build_registry() -> dict:
         start_date = ctx.get("start_date", "")
         num_days = ctx.get("num_days", 2)
 
-        schedule = _scheduler.run_schedule(sched_pins, legs, start_date, num_days)
+        schedule = _scheduler.run_schedule(
+            sched_pins, legs, start_date, num_days, directives=directives
+        )
         ctx["schedule"] = schedule
         for name in skipped_unresolved:
             schedule.setdefault("repairs", []).append(
                 f"skipped unresolved pin {name!r} (could not geocode) - not scheduled"
             )
         return {
-            "days": len(schedule.get("days", [])),
-            "unplaced": len(schedule.get("unplaced", [])),
+            "days": schedule.get("days", []),
+            "day_count": len(schedule.get("days", [])),
+            "unplaced_count": len(schedule.get("unplaced", [])),
             "repairs": schedule.get("repairs", []),
             "stats": schedule.get("stats", {}),
             "skipped_unresolved": skipped_unresolved,
+            "applied_directives": schedule.get("applied_directives", []),
         }
 
     registry = {
@@ -617,12 +622,12 @@ def build_registry() -> dict:
             raise RuntimeError("scout stage unavailable (planner_agents not found)")
         registry["scout"] = _wrap(_no_scout)
 
-    if _critic is not None:
-        registry["critic"] = _wrap(_critic)
+    if _reasoner is not None:
+        registry["reasoner"] = _wrap(_reasoner)
     else:
-        def _no_critic(ctx: dict) -> dict:
-            raise RuntimeError("critic stage unavailable (planner_agents not found)")
-        registry["critic"] = _wrap(_no_critic)
+        def _no_reasoner(ctx: dict) -> dict:
+            raise RuntimeError("reasoner stage unavailable (planner_agents not found)")
+        registry["reasoner"] = _wrap(_no_reasoner)
 
     if _alternatives is not None:
         registry["alternatives"] = _wrap(_alternatives)
@@ -638,7 +643,23 @@ def build_registry() -> dict:
             raise RuntimeError("compiler stage unavailable (planner_agents not found)")
         registry["compiler"] = _wrap(_no_compiler)
 
-    return registry
+    # Tools owned by agents (runner injects these via ctx["_call_tool"]).
+    tools = {}
+    try:
+        tools["ingest"] = _ingest.run_ingest
+        tools["logistics"] = _logistics.run_logistics
+    except AttributeError:
+        pass
+    if _reasoner is not None:
+        tools["hours"] = planner_agents_hours_tool()
+        tools["scheduler"] = _run_scheduler_adapter
+    return registry, tools
+
+
+def planner_agents_hours_tool():
+    """Late-bind Scout's hours tool to avoid import cycles."""
+    from services import planner_agents
+    return planner_agents.hours_tool
 
 
 # ---------------------------------------------------------------------------
