@@ -234,6 +234,57 @@ class TestDirectiveRejections:
         assert entry["status"] == "rejected"
         assert f"dwell_minutes must be >= {DIRECTIVE_COMPRESS_FLOOR}" in entry["reject_reason"]
 
+    def test_unknown_action_rejected(self):
+        pins = [make_pin("pA", "Place A", 0, dwell=60, hours=hours_9to5())]
+        directives = [
+            {"action": "frobnicate", "stop": "Place A"},
+        ]
+        result = schedule_trip(pins, [], "2026-09-07", 1, directives=directives)
+        entry = result["applied_directives"][0]
+        assert entry["status"] == "rejected"
+        assert "unknown action" in entry["reject_reason"]
+
+    def test_self_reference_rejected(self):
+        pins = [make_pin("pA", "Place A", 0, dwell=60, hours=hours_9to5())]
+        directives = [
+            {"action": "move_before", "stop": "Place A", "reference": "Place A"},
+        ]
+        result = schedule_trip(pins, [], "2026-09-07", 1, directives=directives)
+        entry = result["applied_directives"][0]
+        assert entry["status"] == "rejected"
+        assert entry["reject_reason"] == "reference must differ from stop"
+
+    def test_malformed_directive_rejected_no_crash(self):
+        """A non-dict entry in the directives list is rejected, never a crash."""
+        pins = [make_pin("pA", "Place A", 0, dwell=60, hours=hours_9to5())]
+        directives = ["not a dict"]
+        result = schedule_trip(pins, [], "2026-09-07", 1, directives=directives)
+        entry = result["applied_directives"][0]
+        assert entry["status"] == "rejected"
+        assert entry["reject_reason"] == "malformed directive"
+        # The pin is still scheduled normally.
+        assert slot_by_name(result, 0, "Place A") is not None
+
+    def test_duplicate_ordering_directive_second_rejected(self):
+        """Two ordering directives on the same stop: first wins honestly, the
+        duplicate is rejected rather than silently ignored by setdefault."""
+        pins = [
+            make_pin("pA", "Place A", 0, 1.28, 103.85, dwell=120, hours=hours_9to5()),
+            make_pin("pB", "Place B", 1, 1.29, 103.86, dwell=120, hours=hours_9to5()),
+        ]
+        legs = [make_leg("Place A", "Place B", "walk", 60)]
+        directives = [
+            {"action": "move_before", "stop": "Place B", "reference": "Place A"},
+            {"action": "move_after", "stop": "Place B", "reference": "Place A"},
+        ]
+        result = schedule_trip(pins, legs, "2026-09-07", 1, directives=directives)
+        assert result["applied_directives"][0]["status"] == "applied"
+        assert result["applied_directives"][1]["status"] == "rejected"
+        assert result["applied_directives"][1]["reject_reason"] == "duplicate ordering directive for stop"
+        # First (move_before) still honored.
+        names = [s["name"] for s in day_slots(result, 0)]
+        assert names == ["Place B", "Place A"], names
+
     def test_hard_constraint_violation_reverts_directive(self):
         """move_to_day onto a day the stop is closed on is REJECTED and the
         pin is reverted to its feasible placement (never dropped silently)."""
@@ -371,6 +422,26 @@ class TestGradedRemediation:
         assert slot_by_name(result, 0, "Gallery B") is not None
         assert result["applied_directives"][0]["status"] == "applied"
 
+    def test_advisory_note_squeezed_meal(self):
+        """A packed day where _insert_meal_by_shift succeeds carries the
+        squeezed-meal note on the meal slot with correct times."""
+        # Long Visit A 09:00-12:00, 15-min leg, Long Visit B 12:15-15:15.
+        # Span 375 >= 360. No free 60-min gap -> meal shift-inserted 12:00-13:00,
+        # B pushed +60 to 13:15-16:15 (still inside 09:00-17:00 hours).
+        pins = [
+            make_pin("p1", "Long Visit A", 0, 1.28, 103.85, dwell=180, hours=hours_9to5()),
+            make_pin("p2", "Long Visit B", 1, 1.29, 103.86, dwell=180, hours=hours_9to5()),
+        ]
+        legs = [make_leg("Long Visit A", "Long Visit B", "walk", 15)]
+        result = schedule_trip(pins, legs, "2026-09-07", 1)
+        meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
+        assert len(meals) == 1, result["days"][0]["slots"]
+        meal = meals[0]
+        assert meal["start_min"] == 720 and meal["end_min"] == 780  # 12:00-13:00
+        note = meal["advisory_note"]
+        assert note == "Meal squeezed between visits (12:00-13:00) to fit a 60-min window", note
+        assert len(note) <= 140
+
 
 # ---------------------------------------------------------------------------
 # Determinism
@@ -453,3 +524,24 @@ class TestMealFitAnchoring:
         meals = [s for s in result["days"][0]["slots"] if s["kind"] == "meal"]
         assert len(meals) == 1, result["days"][0]["slots"]
         assert meals[0]["pin_id"] is None
+
+    def test_dinner_fit_venue_anchors_meal(self):
+        """A food pin with meal_fit='dinner' is anchored at a dinner-time slot."""
+        h = hours_open_close("08:00", "22:00")
+        pins = [
+            make_pin("pA", "Museum M", 0, 1.28, 103.85, category="museum", dwell=300, hours=h),
+            make_pin("pD", "Dinner Spot", 1, 1.29, 103.86, category="restaurant",
+                     dwell=120, hours=h, meal_fit="dinner"),
+        ]
+        legs = [make_leg("Museum M", "Dinner Spot", "walk", 30)]
+        result = schedule_trip(pins, legs, "2026-09-07", 1)
+        day = result["days"][0]
+        # Museum 09:00-14:00, Dinner Spot 14:30-16:30; span >= 360 => meal exists.
+        meals = [s for s in day["slots"] if s["kind"] == "meal"]
+        assert len(meals) == 1, day["slots"]
+        assert meals[0]["pin_id"] == "pD"
+        assert meals[0]["name"] == "Dinner Spot"
+        # Dinner-time meal slot (mid-visit >= 15:00).
+        mid = (meals[0]["start_min"] + meals[0]["end_min"]) // 2
+        assert mid >= 15 * 60
+        assert not any(s["name"] == "Meal" for s in day["slots"])

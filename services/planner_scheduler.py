@@ -1503,8 +1503,25 @@ def schedule_trip(
     # --- Validate each directive (schedule-independent) ---
     valid: list[dict] = []
     rejected_map: dict = {}  # id(d) -> reject reason
+    seen_order: set = set()  # stops already given a move_before/move_after
+    seen_day: set = set()    # stops already given a move_to_day
     for d in directives:
         reason = _validate_directive(d, name_lookup, num_days)
+        if reason is None:
+            action = d.get("action")
+            stop_norm = normalize_place_name(d.get("stop"))
+            if action in ("move_before", "move_after"):
+                # setdefault applies only the first ordering directive for a
+                # stop; a second one would be silently ignored, so reject it.
+                if stop_norm in seen_order:
+                    reason = "duplicate ordering directive for stop"
+                else:
+                    seen_order.add(stop_norm)
+            elif action == "move_to_day":
+                if stop_norm in seen_day:
+                    reason = "duplicate day directive for stop"
+                else:
+                    seen_day.add(stop_norm)
         if reason is not None:
             rejected_map[id(d)] = reason
         else:
@@ -1531,11 +1548,19 @@ def schedule_trip(
     applied_directives: list[dict] = []
     for d in directives:
         if id(d) in rejected_map:
-            applied_directives.append({
-                **d,
-                "status": "rejected",
-                "reject_reason": rejected_map[id(d)],
-            })
+            if isinstance(d, dict):
+                entry: dict = {
+                    **d,
+                    "status": "rejected",
+                    "reject_reason": rejected_map[id(d)],
+                }
+            else:
+                entry = {
+                    "directive": d,
+                    "status": "rejected",
+                    "reject_reason": rejected_map[id(d)],
+                }
+            applied_directives.append(entry)
         else:
             applied_directives.append({**d, "status": "applied"})
     schedule["applied_directives"] = applied_directives
