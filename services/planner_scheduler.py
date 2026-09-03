@@ -46,6 +46,7 @@ from services.planner_types import (
     day_dates,
     haversine_km,
     estimated_minutes,
+    normalize_place_name,
     MINUTES_PER_DAY,
 )
 
@@ -61,6 +62,11 @@ REST_THRESHOLD_MIN = 480     # 8 h — days above get a rest slot
 MEAL_DURATION = 60
 REST_DURATION = 30
 CLOSED_ALL_TRIP_REASON = "closed all trip days"
+
+# Graded remediation / advisory-note thresholds
+TIGHT_WINDOW_MIN = 15       # a visit ending within this of closing is "tight"
+TIGHT_BUFFER_MIN = 20       # recommended closing buffer when a tight visit is kept
+DIRECTIVE_COMPRESS_FLOOR = 20  # compress_dwell may never go below this floor
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +533,56 @@ def _order_day(stops: list[dict], legs: list[dict]) -> list[dict]:
     return [stops[i] for i in improved]
 
 
+def _apply_order_constraints(
+    ordered: list[dict], order_prefs: dict
+) -> list[dict]:
+    """Reorder a day's route to satisfy soft move_before/move_after constraints.
+
+    *order_prefs* maps a normalized stop name to ``(action, reference_norm)``.
+    Only constraints where BOTH stops are present in *ordered* are considered;
+    a constraint whose reference is on another day is ignored here (the caller
+    rejects it during verification).  The base order is the travel-optimized
+    order; the reorder is a deterministic greedy topological pass that keeps
+    the travel order as much as possible.
+
+    Returns a reordered list.  On an unsatisfiable (cyclic) constraint set it
+    returns the input unchanged — the offending directive is rejected later.
+    """
+    if not order_prefs:
+        return list(ordered)
+    norm_set = {normalize_place_name(s["name"]) for s in ordered}
+    before: dict[str, set] = {}  # normalized name -> set of names that must precede it
+    for stop_name, (action, ref_name) in order_prefs.items():
+        if stop_name not in norm_set or ref_name not in norm_set:
+            continue
+        if action == "move_before":
+            # stop comes BEFORE ref  =>  ref's prereq is stop
+            before.setdefault(ref_name, set()).add(stop_name)
+        elif action == "move_after":
+            # stop comes AFTER ref  =>  stop's prereq is ref
+            before.setdefault(stop_name, set()).add(ref_name)
+    if not before:
+        return list(ordered)
+
+    placed: set = set()
+    result: list[dict] = []
+    remaining = list(ordered)
+    while remaining:
+        chosen_idx = None
+        for i, s in enumerate(remaining):
+            prereqs = before.get(normalize_place_name(s["name"]), set())
+            if prereqs <= placed:
+                chosen_idx = i
+                break
+        if chosen_idx is None:
+            # Unsatisfiable (cycle): fall back to travel order untouched.
+            return list(ordered)
+        chosen = remaining.pop(chosen_idx)
+        result.append(chosen)
+        placed.add(normalize_place_name(chosen["name"]))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Timeline slotting
 # ---------------------------------------------------------------------------
@@ -535,6 +591,7 @@ def _slot_day(
     legs: list[dict],
     day_dow: int,
     repairs: list[str],
+    order_prefs: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Slot stops into a timeline for the given day.
 
@@ -543,14 +600,18 @@ def _slot_day(
       - start >= previous_end + leg_minutes(prev, stop)
       - stop must fit fully inside one open interval for that day-of-week
 
-    Returns (slots, unplaced).
+    *order_prefs* (name -> (action, reference)) are soft ordering constraints
+    applied before slotting when both stops land on this day; hard opening-hours
+    feasibility is always enforced afterwards.  Returns (slots, unplaced).
     Each slot dict has: pin_id, name, kind, start_min, end_min, dwell_minutes.
     """
     if not stops:
         return [], []
 
-    # Order by travel.
+    # Order by travel, then apply soft ordering preferences.
     ordered = _order_day(stops, legs)
+    if order_prefs:
+        ordered = _apply_order_constraints(ordered, order_prefs)
 
     slots: list[dict] = []
     unplaced: list[dict] = []
@@ -591,6 +652,7 @@ def _slot_day(
                     "end_min": end,
                     "dwell_minutes": dwell,
                     "_is_food": _is_food_pin(pin),
+                    "_meal_fit": pin.get("meal_fit"),
                 })
                 cursor = end
                 placed = True
@@ -700,6 +762,7 @@ def _insert_meal_by_shift(
                 "start_min": meal_start,
                 "end_min": meal_end,
                 "dwell_minutes": MEAL_DURATION,
+                "_squeezed_meal": True,
             })
             best = (pref, shifted)
 
@@ -769,13 +832,43 @@ def _stop_load(slots: list[dict]) -> int:
     )
 
 
+def _slot_meal_type(slot: dict) -> str:
+    """Classify a food stop's meal type from its mid-visit time.
+
+    breakfast < 11:00; lunch 11:00-14:59; dinner >= 15:00.
+    """
+    mid = (slot["start_min"] + slot["end_min"]) // 2
+    if mid < 11 * 60:
+        return "breakfast"
+    if mid < 15 * 60:
+        return "lunch"
+    return "dinner"
+
+
+def _meal_fit_compatible(slot: dict) -> bool:
+    """True when the slot's meal_fit matches its own meal type.
+
+    Missing/unknown meal_fit is treated as "any" (no preference) so pins
+    without the field behave exactly as before.
+    """
+    mf = (slot.get("_meal_fit") or "").strip().lower()
+    if mf in ("", "any"):
+        return True
+    if mf in ("breakfast", "lunch", "dinner"):
+        return mf == _slot_meal_type(slot)
+    return True  # tolerate any other value
+
+
 def _anchor_meal_at_food_stop(slots: list[dict]) -> bool:
     """If a food-category stop is among the day's slots, mark it as the meal.
 
     The food stop IS the meal: its slot's kind flips to "meal" in place
     (name/pin_id/times unchanged, dwell still counted by _stop_load).
-    Returns True when a slot was anchored.  Ties go to the food stop nearest
-    midday, then by seq order — deterministic.
+
+    meal_fit-aware: when a food stop carries a meal_fit matching the meal it
+    represents (lunch stop <-> lunch|any, dinner stop <-> dinner|any), it is
+    preferred.  Pins without meal_fit (or with no match) fall back to the
+    legacy nearest-midday food stop.  Returns True when a slot was anchored.
     """
     food_slots = [
         s for s in slots
@@ -783,9 +876,11 @@ def _anchor_meal_at_food_stop(slots: list[dict]) -> bool:
     ]
     if not food_slots:
         return False
+    matched = [s for s in food_slots if _meal_fit_compatible(s)]
+    pool = matched if matched else food_slots
     midday = 12 * 60
     chosen = min(
-        food_slots,
+        pool,
         key=lambda s: (abs((s["start_min"] + s["end_min"]) // 2 - midday), s["start_min"]),
     )
     chosen["kind"] = "meal"
@@ -801,6 +896,7 @@ def _schedule_day(
     day_index: int,
     legs: list[dict],
     repairs: list[str],
+    order_prefs: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Schedule one day: slot stops, insert meals/rest.
 
@@ -815,7 +911,7 @@ def _schedule_day(
             )
 
     # Slot the stops (Level 3 ordering + timeline slotting with Level 1 feasibility).
-    slots, unplaced = _slot_day(day_pins, legs, day_dow, repairs)
+    slots, unplaced = _slot_day(day_pins, legs, day_dow, repairs, order_prefs)
 
     if not slots:
         return [], unplaced
@@ -1045,26 +1141,275 @@ def _compute_swap_delta(
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Directives: validation, preference application, verification, advisory notes
 # ---------------------------------------------------------------------------
-def schedule_trip(
+_VALID_ACTIONS = ("move_before", "move_after", "move_to_day", "compress_dwell", "drop")
+
+
+def _build_name_lookup(pins: list[dict]) -> dict:
+    """Map normalized place name -> pin (first occurrence wins, deterministic)."""
+    lookup: dict = {}
+    for p in pins:
+        n = normalize_place_name(p.get("name"))
+        if n and n not in lookup:
+            lookup[n] = p
+    return lookup
+
+
+def _format_hhmm(minutes: int) -> str:
+    m = int(minutes)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _validate_directive(d: dict, name_lookup: dict, num_days: int) -> str | None:
+    """Return a reject reason if the directive is structurally invalid, else None.
+
+    Validation is schedule-independent: it checks the directive references
+    exist and their numeric fields are in range.  Feasibility is checked
+    separately during verification (hard constraints always win).
+    """
+    if not isinstance(d, dict):
+        return "malformed directive"
+    action = d.get("action")
+    if action not in _VALID_ACTIONS:
+        return f"unknown action {action!r}"
+    stop_norm = normalize_place_name(d.get("stop"))
+    if not stop_norm or stop_norm not in name_lookup:
+        return "unknown stop"
+    if action in ("move_before", "move_after"):
+        ref_norm = normalize_place_name(d.get("reference"))
+        if not ref_norm or ref_norm not in name_lookup:
+            return "unknown reference stop"
+        if ref_norm == stop_norm:
+            return "reference must differ from stop"
+    elif action == "move_to_day":
+        day = d.get("day")
+        if not isinstance(day, int) or not (0 <= day < num_days):
+            return "day out of range"
+    elif action == "compress_dwell":
+        dw = d.get("dwell_minutes")
+        if not isinstance(dw, int) or dw < DIRECTIVE_COMPRESS_FLOOR:
+            return f"dwell_minutes must be >= {DIRECTIVE_COMPRESS_FLOOR}"
+    return None
+
+
+def _verify_directive(d: dict, schedule: dict, name_lookup: dict, num_days: int) -> str | None:
+    """Return a reject reason if the directive's intent is not honored, else None.
+
+    This is the hard-constraint gate: a directive that would place a stop
+    outside opening hours (leaving it unplaced) or on the wrong day/order is
+    rejected here and reverted (dropped from the re-run).
+    """
+    action = d.get("action")
+    stop_norm = normalize_place_name(d.get("stop"))
+    if action == "drop":
+        for u in schedule["unplaced"]:
+            if normalize_place_name(u.get("name")) == stop_norm:
+                return None
+        return "drop not applied (stop still scheduled)"
+    if action == "compress_dwell":
+        expected = max(d.get("dwell_minutes"), DIRECTIVE_COMPRESS_FLOOR)
+        for day in schedule["days"]:
+            for slot in day["slots"]:
+                if slot["kind"] in ("stop", "meal") and normalize_place_name(slot.get("name")) == stop_norm:
+                    if slot["dwell_minutes"] == expected:
+                        return None
+                    return "compress_dwell not applied (dwell unchanged)"
+        return "compress_dwell not applied (stop not scheduled)"
+    if action == "move_to_day":
+        target = d.get("day")
+        for day in schedule["days"]:
+            for slot in day["slots"]:
+                if slot["kind"] in ("stop", "meal") and normalize_place_name(slot.get("name")) == stop_norm:
+                    if day["day_index"] == target:
+                        return None
+                    return f"could not place stop on day {target}"
+        return f"could not place stop on day {target}"
+    if action in ("move_before", "move_after"):
+        ref_norm = normalize_place_name(d.get("reference"))
+        day_of: dict = {}
+        order: dict = {}
+        for day in schedule["days"]:
+            stops = [s for s in day["slots"] if s["kind"] in ("stop", "meal")]
+            for idx, s in enumerate(stops):
+                day_of[normalize_place_name(s.get("name"))] = day["day_index"]
+                order[normalize_place_name(s.get("name"))] = idx
+        if stop_norm not in day_of:
+            return "stop not scheduled"
+        if ref_norm not in day_of:
+            return "reference stop not scheduled"
+        if day_of[stop_norm] != day_of[ref_norm]:
+            return "reference on a different day"
+        if action == "move_before":
+            if not (order[stop_norm] < order[ref_norm]):
+                return "could not place stop before reference"
+        else:
+            if not (order[stop_norm] > order[ref_norm]):
+                return "could not place stop after reference"
+        return None
+    return "unknown action"
+
+
+def _apply_preferences(
+    pins: list[dict], active: list[dict], name_lookup: dict
+) -> tuple[list[dict], dict, list[dict]]:
+    """Apply valid directives as soft preferences to a working copy of pins.
+
+    Returns (working_pins, prefs, drop_notes).  The original *pins* are never
+    mutated.  compress_dwell rewrites the pin's dwell so legs/times recompute;
+    drop excludes the pin from scheduling (reported in drop_notes); move_to_day
+    records a day hint; move_before/move_after record ordering hints.
+    """
+    dropped: set = set()
+    pref_day: dict = {}
+    order: dict = {}
+    compress: dict = {}  # name_norm -> max requested dwell
+    for d in active:
+        action = d.get("action")
+        stop_norm = normalize_place_name(d.get("stop"))
+        if action == "drop":
+            dropped.add(stop_norm)
+        elif action == "compress_dwell":
+            compress[stop_norm] = max(compress.get(stop_norm, 0), int(d.get("dwell_minutes") or 0))
+        elif action == "move_to_day":
+            pref_day.setdefault(stop_norm, d.get("day"))
+        elif action in ("move_before", "move_after"):
+            order.setdefault(stop_norm, (action, normalize_place_name(d.get("reference"))))
+
+    working: list[dict] = []
+    compressed: dict = {}
+    for p in pins:
+        n = normalize_place_name(p.get("name"))
+        if n in dropped:
+            continue
+        np = dict(p)
+        if n in compress:
+            orig = np.get("dwell_minutes", 60)
+            val = max(compress[n], DIRECTIVE_COMPRESS_FLOOR)
+            np["dwell_minutes"] = val
+            compressed[n] = {"orig": orig, "val": val}
+        working.append(np)
+
+    drop_notes: list[dict] = []
+    for p in pins:
+        n = normalize_place_name(p.get("name"))
+        if n in dropped:
+            reason = "excluded by drop directive"
+            for d in active:
+                if d.get("action") == "drop" and normalize_place_name(d.get("stop")) == n:
+                    reason = d.get("reason") or reason
+                    break
+            drop_notes.append({
+                "pin_id": p.get("pin_id", ""),
+                "name": p.get("name", ""),
+                "reason": reason,
+            })
+
+    prefs = {"pref_day": pref_day, "order": order, "compressed": compressed}
+    return working, prefs, drop_notes
+
+
+def _apply_pref_days(
+    assignments: list[list[dict]], pref_day: dict, day_dows: list[int]
+) -> list[list[dict]]:
+    """Move move_to_day-targeted pins onto their preferred day.
+
+    Feasibility is not pre-checked here — opening-hours slotting decides below,
+    and an infeasible move results in an unplaced stop that verification rejects.
+    """
+    num_days = len(assignments)
+    days = [list(d) for d in assignments]
+    for name_norm, target_day in pref_day.items():
+        if not (0 <= target_day < num_days):
+            continue
+        found = None
+        found_day = None
+        for di in range(num_days):
+            for p in days[di]:
+                if normalize_place_name(p.get("name")) == name_norm:
+                    found = p
+                    found_day = di
+                    break
+            if found is not None:
+                break
+        if found is None or found_day == target_day:
+            continue
+        days[found_day].remove(found)
+        days[target_day].append(found)
+        days[target_day].sort(key=lambda p: (p.get("seq", 0), p.get("name", "")))
+    return days
+
+
+def _add_advisory_notes(
+    days_output: list[dict], name_lookup: dict, prefs: dict
+) -> None:
+    """Annotate tight visits with an advisory_note (graded remediation).
+
+    Triggers: a visit ending within TIGHT_WINDOW_MIN of its interval close, a
+    dwell compressed by a compress_dwell directive, or a meal window squeezed
+    in between stops.  Notes are advisory only — the stop stays scheduled.
+    Also strips the private slot markers (_is_food/_meal_fit/_squeezed_meal).
+    """
+    compressed = prefs.get("compressed") or {}
+    for day in days_output:
+        dow = _day_of_week(day["date"])
+        for slot in day["slots"]:
+            note = None
+            if slot["kind"] in ("stop", "meal") and slot.get("pin_id"):
+                pin = name_lookup.get(normalize_place_name(slot.get("name")))
+                if pin is not None:
+                    intervals = _intervals_for_day(pin.get("opening_hours"), dow)
+                    containing = [
+                        iv for iv in intervals
+                        if iv[0] <= slot["start_min"] and slot["end_min"] <= iv[1]
+                    ]
+                    if containing:
+                        close = max(c[1] for c in containing)
+                        if 0 <= close - slot["end_min"] <= TIGHT_WINDOW_MIN:
+                            suggested = max(close - slot["start_min"] - TIGHT_BUFFER_MIN, 5)
+                            note = (
+                                f"Tight: closes {_format_hhmm(close)}, "
+                                f"arrive {_format_hhmm(slot['start_min'])} — "
+                                f"keep visit to ~{suggested} min"
+                            )
+                c = compressed.get(normalize_place_name(slot.get("name")))
+                if c is not None and slot["dwell_minutes"] == c["val"]:
+                    compress_note = f"Dwell compressed {c['orig']}->{c['val']} min by directive"
+                    note = f"{note}; {compress_note}" if note else compress_note
+            elif slot["kind"] == "meal" and not slot.get("pin_id") and slot.get("_squeezed_meal"):
+                note = (
+                    f"Meal squeezed between visits ({_format_hhmm(slot['start_min'])}-"
+                    f"{_format_hhmm(slot['end_min'])}) to fit a {MEAL_DURATION}-min window"
+                )
+            if note:
+                slot["advisory_note"] = note
+            # Strip private markers not part of the output contract.
+            slot.pop("_is_food", None)
+            slot.pop("_meal_fit", None)
+            slot.pop("_squeezed_meal", None)
+
+
+# ---------------------------------------------------------------------------
+# Core cascade (no directive logic)
+# ---------------------------------------------------------------------------
+def _schedule_core(
     pins: list[dict],
     legs: list[dict],
     start_date: str,
     num_days: int,
+    prefs: dict | None = None,
+    drop_notes: list[dict] | None = None,
 ) -> dict:
-    """Schedule pins across num_days days following the objective cascade.
+    """The deterministic cascade: cluster -> closed-day repair -> balance ->
+    apply move_to_day hints -> per-day slot + meal/rest -> advisory notes.
 
-    Parameters:
-        pins: list of PlaceResearch dicts (see planner_types.py).
-        legs: list of Leg dicts with chosen_mode and chosen_minutes.
-        start_date: "YYYY-MM-DD".
-        num_days: 1..7.
-
-    Returns: Schedule dict (see planner_types.py).
+    *prefs* carries soft directive preferences; *drop_notes* are appended to
+    the unplaced list.  Returns the Schedule dict (without applied_directives).
     """
+    prefs = prefs or {}
     repairs: list[str] = []
     unplaced_all: list[dict] = []
+    name_lookup = _build_name_lookup(pins)
 
     # Sort pins deterministically for stable processing.
     pins_sorted = sorted(pins, key=lambda p: (p.get("seq", 0), p.get("name", "")))
@@ -1083,16 +1428,20 @@ def schedule_trip(
     # --- Level 2b: Balance loads ---
     assignments = _balance(assignments, day_dows)
 
+    # --- move_to_day hints (soft preference, applied after balancing) ---
+    if prefs.get("pref_day"):
+        assignments = _apply_pref_days(assignments, prefs["pref_day"], day_dows)
+
+    order_prefs = prefs.get("order") or {}
+
     # --- Level 1 (continued): Slot each day, enforcing hours ---
     days_output: list[dict] = []
     for day_idx in range(num_days):
         day_pins = assignments[day_idx]
         dow = day_dows[day_idx]
 
-        slots, day_unplaced = _schedule_day(day_pins, dow, day_idx, legs, repairs)
+        slots, day_unplaced = _schedule_day(day_pins, dow, day_idx, legs, repairs, order_prefs)
         unplaced_all.extend(day_unplaced)
-        for s in slots:
-            s.pop("_is_food", None)  # private marker, not part of the contract
 
         day_legs = _build_day_legs(slots, legs)
         total_scheduled = _stop_load(slots)
@@ -1105,6 +1454,11 @@ def schedule_trip(
             "total_scheduled_minutes": total_scheduled,
         })
 
+    # --- Advisory notes (graded remediation) + strip private markers ---
+    _add_advisory_notes(days_output, name_lookup, prefs)
+    if drop_notes:
+        unplaced_all.extend(drop_notes)
+
     # --- Stats ---
     stats = _compute_stats(days_output)
 
@@ -1114,6 +1468,78 @@ def schedule_trip(
         "repairs": sorted(set(repairs)),  # deduplicate + sort for determinism
         "stats": stats,
     }
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+def schedule_trip(
+    pins: list[dict],
+    legs: list[dict],
+    start_date: str,
+    num_days: int,
+    directives: list[dict] | None = None,
+) -> dict:
+    """Schedule pins across num_days days following the objective cascade.
+
+    Parameters:
+        pins: list of PlaceResearch dicts (see planner_types.py).
+        legs: list of Leg dicts with chosen_mode and chosen_minutes.
+        start_date: "YYYY-MM-DD".
+        num_days: 1..7.
+        directives: optional list of directive dicts
+            {"action", "stop", "reference", "day", "dwell_minutes", "reason"}.
+            Directives are PREFERENCES applied before/within the cascade; hard
+            constraints (opening-hours feasibility, valid references) always
+            win — an infeasible directive is recorded in "applied_directives"
+            as rejected (and reverted), never silently dropped.
+
+    Returns: Schedule dict (see planner_types.py) with an added
+    "applied_directives" list and optional "advisory_note" on tight slots.
+    """
+    directives = list(directives) if directives else []
+    name_lookup = _build_name_lookup(pins)
+
+    # --- Validate each directive (schedule-independent) ---
+    valid: list[dict] = []
+    rejected_map: dict = {}  # id(d) -> reject reason
+    for d in directives:
+        reason = _validate_directive(d, name_lookup, num_days)
+        if reason is not None:
+            rejected_map[id(d)] = reason
+        else:
+            valid.append(d)
+
+    # --- Iteratively apply only the directives that remain hard-feasible ---
+    active = list(valid)
+    schedule: dict = {}
+    for _ in range(len(valid) + 1):
+        working, prefs, drop_notes = _apply_preferences(pins, active, name_lookup)
+        schedule = _schedule_core(working, legs, start_date, num_days, prefs, drop_notes)
+        new_active: list[dict] = []
+        for d in active:
+            reason = _verify_directive(d, schedule, name_lookup, num_days)
+            if reason is not None:
+                rejected_map[id(d)] = reason
+            else:
+                new_active.append(d)
+        if len(new_active) == len(active):
+            break
+        active = new_active
+
+    # --- Report outcomes in the original input order ---
+    applied_directives: list[dict] = []
+    for d in directives:
+        if id(d) in rejected_map:
+            applied_directives.append({
+                **d,
+                "status": "rejected",
+                "reject_reason": rejected_map[id(d)],
+            })
+        else:
+            applied_directives.append({**d, "status": "applied"})
+    schedule["applied_directives"] = applied_directives
+    return schedule
 
 
 # Thin alias — the graph runner may call either name.
