@@ -126,3 +126,107 @@ def test_directions_missing_fields_reports_item_keys(monkeypatch):
     result = planner_serp.directions("A", "B", "walking", "Singapore")
     assert result is None
     assert "item keys" in planner_serp.LAST_ERROR
+
+
+# ---------------------------------------------------------------------------
+# reverse_geocode
+# ---------------------------------------------------------------------------
+def test_reverse_geocode_parses_local_results(monkeypatch):
+    """local_results[0] is parsed into the frozen contract shape."""
+    payload = {
+        "local_results": [
+            {
+                "title": "Gardens by the Bay",
+                "address": "18 Marina Gardens Dr, Singapore 018953",
+                "gps_coordinates": {"latitude": 1.2816, "longitude": 103.8636},
+                "place_id": "0x31da175a4e0e1b3d:0x8c",
+            }
+        ]
+    }
+
+    def fake_get(*a, **k):
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(planner_serp.httpx, "get", fake_get)
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    result = planner_serp.reverse_geocode(1.2816, 103.8636)
+    assert result["name"] == "Gardens by the Bay"
+    assert result["address"] == "18 Marina Gardens Dr, Singapore 018953"
+    assert result["lat"] == 1.2816
+    assert result["lng"] == 103.8636
+    assert result["place_id"] == "0x31da175a4e0e1b3d:0x8c"
+    assert set(result) == {"name", "address", "lat", "lng", "place_id"}
+
+
+def test_reverse_geocode_falls_back_to_place_results(monkeypatch):
+    """A single place_results object is used when local_results is absent."""
+    payload = {
+        "place_results": {
+            "title": "Merlion Park",
+            "address": "1 Fullerton Rd, Singapore 049213",
+            "gps_coordinates": {"latitude": 1.2868, "longitude": 103.8545},
+            "place_id": "ChIJX5g0U5gZ2DSK",
+        }
+    }
+
+    def fake_get(*a, **k):
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(planner_serp.httpx, "get", fake_get)
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    result = planner_serp.reverse_geocode(1.2868, 103.8545)
+    assert result["name"] == "Merlion Park"
+    assert result["address"] == "1 Fullerton Rd, Singapore 049213"
+    assert result["lat"] == 1.2868
+    assert result["lng"] == 103.8545
+    assert result["place_id"] == "ChIJX5g0U5gZ2DSK"
+
+
+def test_reverse_geocode_serp_error_surfaces_in_last_error(monkeypatch):
+    """SerpApi returns HTTP 200 with an error field; it must surface."""
+    payload = {"error": "Invalid `ll` parameter value."}
+
+    def fake_get(*a, **k):
+        return _FakeResp(payload, text=str(payload))
+
+    monkeypatch.setattr(planner_serp.httpx, "get", fake_get)
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    result = planner_serp.reverse_geocode(1.0, 103.0)
+    assert result is None
+    assert "Invalid" in planner_serp.LAST_ERROR
+
+
+def test_reverse_geocode_redacts_api_key_in_exception_text(monkeypatch):
+    """HTTPStatusError messages embed the request URL incl. api_key — redacted."""
+    req = planner_serp.httpx.Request(
+        "GET", "https://serpapi.com/search.json?api_key=supersecret"
+    )
+    resp = planner_serp.httpx.Response(400, text='{"error": "bad"}', request=req)
+
+    def fake_get(*a, **k):
+        raise planner_serp.httpx.HTTPStatusError(
+            "Client error '400' for url https://serpapi.com/search.json?api_key=supersecret",
+            request=req,
+            response=resp,
+        )
+
+    monkeypatch.setattr(planner_serp.httpx, "get", fake_get)
+    monkeypatch.setenv("SERPAPI_KEY", "supersecret")
+    result = planner_serp.reverse_geocode(1.0, 103.0)
+    assert result is None
+    assert "supersecret" not in planner_serp.LAST_ERROR
+    assert "api_key=REDACTED" in planner_serp.LAST_ERROR
+
+
+def test_reverse_geocode_no_results_reports_reason(monkeypatch):
+    """No local_results / place_results yields a 'no results near' reason."""
+    payload = {"search_metadata": {"status": "Success"}}
+
+    def fake_get(*a, **k):
+        return _FakeResp(payload, text=str(payload))
+
+    monkeypatch.setattr(planner_serp.httpx, "get", fake_get)
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    result = planner_serp.reverse_geocode(1.0, 103.0)
+    assert result is None
+    assert "no results near 1.0,103.0" in planner_serp.LAST_ERROR

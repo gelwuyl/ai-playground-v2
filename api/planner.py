@@ -8,6 +8,7 @@ rewrites map the original paths here with an ``action`` query parameter:
     POST /api/planner_step    -> action=step
     GET  /api/planner_status   -> action=status
     POST /api/planner_delete  -> action=delete
+    GET  /api/planner          -> action=geocode (reverse-geocode a map pin)
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from services.database import get_conn
 from services.planner_db import _ensure_tables
 from services.vercel_handler import VercelHandler
+import services.planner_serp as planner_serp
 
 
 # ---------------------------------------------------------------------------
@@ -45,10 +47,13 @@ class handler(VercelHandler):
         )
 
     def do_GET(self):
-        if self._action() == "status":
+        action = self._action()
+        if action == "status":
             return self._status()
+        if action == "geocode":
+            return self._geocode()
         return self.json_response(
-            {"detail": "Unknown GET action. Use action=status."}, 400
+            {"detail": "Unknown GET action. Use action=status|geocode."}, 400
         )
 
     # ------------------------------------------------------------------ helpers
@@ -352,6 +357,27 @@ class handler(VercelHandler):
             "itinerary_json": itin_json,
             "markdown": itin_md,
         })
+
+    def _geocode(self):
+        lat_raw = self._query_param("lat")
+        lng_raw = self._query_param("lng")
+        if not lat_raw or not lng_raw:
+            return self.json_response(
+                {"detail": "lat and lng are required."}, 400
+            )
+        try:
+            lat = float(lat_raw)
+            lng = float(lng_raw)
+        except (ValueError, TypeError):
+            return self.json_response(
+                {"detail": "lat and lng must be valid floats."}, 400
+            )
+        result = planner_serp.reverse_geocode(lat, lng)
+        if result is None:
+            return self.json_response(
+                {"detail": planner_serp.LAST_ERROR or "Geocode failed."}, 500
+            )
+        return self.json_response(result)
 
     def _delete(self):
         body = self._body()
