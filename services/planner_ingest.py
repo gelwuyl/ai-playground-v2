@@ -176,8 +176,8 @@ def _parse_final_maps_url(url: str) -> dict | None:
     if lat is not None or lng is not None:
         return {"name": None, "lat": lat, "lng": lng, "address": None,
                 "_coords_only": True}
-    # name only, no coords -- SerpApi fallback runs.
-    return None
+    # name only, no coords -- SerpApi fallback runs with the q= name.
+    return {"name": name, "lat": None, "lng": None, "address": None}
 
 
 def _geocode_fallback(final_url: str, city: str,
@@ -195,6 +195,9 @@ def _geocode_fallback(final_url: str, city: str,
     place_match = re.search(r"/place/([^/]+)", final_url)
     if place_match:
         query = urllib.parse.unquote_plus(place_match.group(1)).replace("+", " ")
+    # A q= name parsed from the URL (no coords) is itself a geocodable query.
+    if not query and coords and coords.get("name") and coords.get("lat") is None:
+        query = coords["name"]
     # If no slug, try a "lat,lng" query from the coords we already parsed.
     if not query and coords and coords.get("lat") is not None:
         query = f"{coords['lat']},{coords['lng']}"
@@ -280,10 +283,11 @@ def resolve_short_link(url: str, city: str) -> dict | None:
         pass
 
     parsed = _parse_final_maps_url(final_url)
-    if parsed and not parsed.get("_coords_only"):
+    if parsed and not parsed.get("_coords_only") and parsed.get("lat") is not None:
         # Full resolution (name + coords) from the final URL.
         return parsed
-    # Coords-only or nothing usable: try the SerpApi geocode fallback.
+    # Name-only, coords-only, or nothing usable: try the SerpApi geocode
+    # fallback (it geocodes the q= name or the coords).
     # If the fallback also fails, return coords (name=None) so run_ingest
     # persists them with a resolve_error instead of silently using the URL.
     result = _geocode_fallback(final_url, city, parsed)

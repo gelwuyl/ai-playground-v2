@@ -152,12 +152,14 @@ class TestParseFinalMapsUrl:
         assert result["lng"] == pytest.approx(151.2153)
         assert result["name"] == "Sydney Opera House"
 
-    def test_name_only_no_coords_returns_none(self):
-        """A URL with a /place/ name but no @lat,lng -> None so the
-        SerpApi geocode fallback can run."""
+    def test_name_only_no_coords_returns_name_for_fallback(self):
+        """A URL with a /place/ name but no @lat,lng -> the name dict so the
+        SerpApi geocode fallback can geocode that name (previously returned
+        None and the name was thrown away — the road-trip ingest bug)."""
         url = "https://www.google.com/maps/place/Gardens+by+the+Bay"
         result = _parse_final_maps_url(url)
-        assert result is None
+        assert result == {"name": "Gardens by the Bay", "lat": None,
+                          "lng": None, "address": None}
 
 
 # ---------------------------------------------------------------------------
