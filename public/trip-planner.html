@@ -696,9 +696,10 @@
         var t = trace[i];
         if (!t || typeof t !== "object") continue;
         if (t.node_type === "tool") {
-          toolStatusMap[t.node_name] = t.status;
+          var st = (t.status === "ok") ? "completed" : t.status;
+        toolStatusMap[t.node_name] = st;
         } else {
-          nodeStatusMap[t.node_name] = t.status;
+          nodeStatusMap[t.node_name] = (t.status === "ok") ? "completed" : t.status;
           if (t.round != null) nodeRoundMap[t.node_name] = t.round;
           if (t.node_name === "scout" && t.round != null && t.round >= 1) scoutThrownBack = true;
           if (t.node_name === "reasoner") lastReasonerIdx = i;
@@ -815,6 +816,7 @@
 
     /* ---- Trace helpers ---- */
     function statusIconFor(status) {
+      if (status === "ok") status = "completed";
       return status === "completed" ? "✅" :
              status === "failed" ? "❌" :
              status === "running" ? "⏳" : "⬜";
