@@ -976,7 +976,9 @@ def run_reasoner(ctx: dict) -> dict:
     round_no = start_round
     while round_no < max_rounds:
         # --- Draft: run the deterministic scheduler with accumulated directives.
-        call_tool("scheduler", directives=list(directives_so_far))
+        draft = call_tool("scheduler", directives=list(directives_so_far))
+        if isinstance(draft, dict) and draft:
+            ctx["schedule"] = draft
         round_no += 1
         ctx["reasoner_round"] = round_no  # a draft was consumed
 
