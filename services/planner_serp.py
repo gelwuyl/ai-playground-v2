@@ -177,6 +177,164 @@ def geocode_place(name: str, city: str) -> dict | None:
         return None
 
 
+def reverse_geocode(lat: float, lng: float) -> dict | None:
+    """Reverse-geocode a coordinate via SerpApi Google Maps engine.
+
+    Returns None on any failure. Returns dict with keys: name, address, lat,
+    lng, place_id (missing fields are None).
+    """
+    global LAST_ERROR
+    LAST_ERROR = None
+    if USE_FIXTURES:
+        return {
+            "name": "Fixture Place",
+            "address": "1 Fixture Road, Singapore 000000",
+            "lat": lat,
+            "lng": lng,
+            "place_id": "fixture_reverse",
+        }
+
+    key = _serp_key()
+    if not key:
+        print("reverse_geocode: SERPAPI_KEY not set")
+        LAST_ERROR = "SERPAPI_KEY not set"
+        return None
+
+    try:
+        resp = httpx.get(
+            "https://serpapi.com/search.json",
+            params={
+                "engine": "google_maps",
+                "type": "search",
+                "q": f"@{lat},{lng}",
+                "ll": f"@{lat},{lng},17z",
+                "hl": "en",
+                "api_key": key,
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            LAST_ERROR = str(data["error"])
+            return None
+        # The nearest match to the coordinate comes back as the first
+        # local_results entry, or as a single place_results object.
+        entry = None
+        local = data.get("local_results")
+        if isinstance(local, list) and local:
+            entry = local[0]
+        elif isinstance(local, dict) and local:
+            entry = local
+        if not entry and isinstance(data.get("place_results"), dict) and data["place_results"]:
+            entry = data["place_results"]
+        if not entry:
+            keys = sorted(data.keys()) if isinstance(data, dict) else "non-dict"
+            LAST_ERROR = f"no results near {lat},{lng}; response keys: {keys}"
+            return None
+        gps = entry.get("gps_coordinates") or {}
+        return {
+            "name": entry.get("title"),
+            "address": entry.get("address"),
+            "lat": gps.get("latitude"),
+            "lng": gps.get("longitude"),
+            "place_id": entry.get("place_id"),
+        }
+    except Exception as e:
+        body = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body = str(resp_obj.text)[:200]
+            except Exception:
+                body = ""
+        msg = _redact(f"{type(e).__name__}: {e} {body}").strip()
+        print(f"reverse_geocode failed: {msg}")
+        LAST_ERROR = f"geocode {msg}"
+        return None
+
+
+def search_places(query: str, city: str) -> list[dict] | None:
+    """Search places via SerpApi Google Maps engine. Returns a list or None.
+
+    Returns a list of up to 6 dicts with keys: name, address, lat, lng,
+    place_id (missing fields are None). An empty list is a valid success
+    (no results); None means a backend failure.
+    """
+    global LAST_ERROR
+    LAST_ERROR = None
+    if USE_FIXTURES:
+        return [{
+            "name": "Fixture Place",
+            "address": "1 Fixture Road, Singapore 000000",
+            "lat": 1.3521,
+            "lng": 103.8198,
+            "place_id": "fixture_search",
+        }]
+
+    key = _serp_key()
+    if not key:
+        print("search_places: SERPAPI_KEY not set")
+        LAST_ERROR = "SERPAPI_KEY not set"
+        return None
+
+    try:
+        params = {
+            "engine": "google_maps",
+            "type": "search",
+            "q": f"{query} {city}".strip(),
+            "api_key": key,
+            "hl": "en",
+        }
+        ll = _city_ll(city)
+        if ll:
+            params["ll"] = ll
+        resp = httpx.get(
+            "https://serpapi.com/search.json",
+            params=params,
+            headers={"User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("error"):
+            LAST_ERROR = str(data["error"])
+            return None
+        # A broad search returns a local_results list; a specific query may
+        # return a single place_results object.
+        local = data.get("local_results")
+        if isinstance(local, list):
+            items = local
+        elif isinstance(data.get("place_results"), dict) and data["place_results"]:
+            items = [data["place_results"]]
+        else:
+            items = []
+        out = []
+        for r in items[:6]:
+            gps = r.get("gps_coordinates") or {}
+            out.append({
+                "name": r.get("title"),
+                "address": r.get("address"),
+                "lat": gps.get("latitude"),
+                "lng": gps.get("longitude"),
+                "place_id": r.get("place_id"),
+            })
+        return out
+    except Exception as e:
+        body = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body = str(resp_obj.text)[:200]
+            except Exception:
+                body = ""
+        msg = _redact(f"{type(e).__name__}: {e} {body}").strip()
+        print(f"search_places failed: {msg}")
+        LAST_ERROR = f"search {msg}"
+        return None
+
+
 def place_hours(name: str, city: str, place_id: str | None) -> dict | None:
     """Fetch opening hours for a place via SerpApi. Returns None on any failure.
 
