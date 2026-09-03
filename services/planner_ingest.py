@@ -286,7 +286,18 @@ def resolve_short_link(url: str, city: str) -> dict | None:
     # Coords-only or nothing usable: try the SerpApi geocode fallback.
     # If the fallback also fails, return coords (name=None) so run_ingest
     # persists them with a resolve_error instead of silently using the URL.
-    return _geocode_fallback(final_url, city, parsed)
+    result = _geocode_fallback(final_url, city, parsed)
+    if result:
+        return result
+    # Nothing worked — log WHY (interstitial vs network error vs unparseable
+    # link shape); the function's contract is None on failure, never raise.
+    print(
+        f"resolve_short_link failed: url={url[:80]!r} "
+        f"final_url={final_url[:120]!r} "
+        f"http_fetch={'failed' if final_url == url else 'ok'} "
+        f"parse={'none' if parsed is None else 'coords_only'}"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
