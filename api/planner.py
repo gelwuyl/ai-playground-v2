@@ -9,6 +9,7 @@ rewrites map the original paths here with an ``action`` query parameter:
     GET  /api/planner_status   -> action=status
     POST /api/planner_delete  -> action=delete
     GET  /api/planner          -> action=geocode (reverse-geocode a map pin)
+    GET  /api/planner          -> action=search (search places for the map picker)
 """
 from __future__ import annotations
 
@@ -52,8 +53,10 @@ class handler(VercelHandler):
             return self._status()
         if action == "geocode":
             return self._geocode()
+        if action == "search":
+            return self._search()
         return self.json_response(
-            {"detail": "Unknown GET action. Use action=status|geocode."}, 400
+            {"detail": "Unknown GET action. Use action=status|geocode|search."}, 400
         )
 
     # ------------------------------------------------------------------ helpers
@@ -378,6 +381,20 @@ class handler(VercelHandler):
                 {"detail": planner_serp.LAST_ERROR or "Geocode failed."}, 500
             )
         return self.json_response(result)
+
+    def _search(self):
+        q = self._query_param("q")
+        if not q:
+            return self.json_response(
+                {"detail": "q is required."}, 400
+            )
+        city = self._query_param("city")
+        result = planner_serp.search_places(q, city)
+        if result is None:
+            return self.json_response(
+                {"detail": planner_serp.LAST_ERROR or "Search failed."}, 500
+            )
+        return self.json_response({"results": result})
 
     def _delete(self):
         body = self._body()
