@@ -157,7 +157,7 @@ class handler(VercelHandler):
         return self.json_response({
             "session_id": session_id,
             "status": "started",
-            "next_step": "ingest",
+            "next_step": "scout",
         })
 
     def _step(self):
