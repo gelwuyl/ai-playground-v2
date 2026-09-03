@@ -206,7 +206,9 @@ def reverse_geocode(lat: float, lng: float) -> dict | None:
             params={
                 "engine": "google_maps",
                 "type": "search",
-                "q": f"@{lat},{lng}",
+                # Bare "lat,lng" (no @ prefix) reverse-geocodes; the "@" form
+                # returns zero results ("Google hasn't returned any results").
+                "q": f"{lat},{lng}",
                 "ll": f"@{lat},{lng},17z",
                 "hl": "en",
                 "api_key": key,
