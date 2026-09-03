@@ -6,6 +6,8 @@
   <title>Mr. Bounce — Trip Orchestrator</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/story.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <style>
     /* ---- Page-local styles (mirrors research.html pattern) ---- */
     .container { max-width: 960px; }
@@ -49,6 +51,63 @@
     }
     .intake-form .row { display: flex; gap: 1rem; }
     .intake-form .row > .field { flex: 1; }
+
+    /* ---- Map picker (beside the pins textarea) ---- */
+    .map-picker {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 1rem;
+      align-items: stretch;
+    }
+    .map-picker > * { min-width: 0; }
+    .map-picker textarea { height: 160px; }
+
+    /* All Leaflet-facing overrides are scoped under .map-pane so the CDN
+       stylesheet never clobbers the rest of the card. */
+    .map-pane {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      height: 160px;
+    }
+    .map-pane .map-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #333;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid #e4e7eb;
+      background: #f9fafb;
+      flex: none;
+    }
+    .map-pane #map {
+      flex: 1;
+      min-height: 0;
+      z-index: 0;
+    }
+    .map-pane .leaflet-container {
+      font-family: inherit;
+      border-radius: 0;
+    }
+    .map-pane .map-chip {
+      flex: none;
+      font-size: 0.78rem;
+      color: #52606d;
+      background: #f9fafb;
+      border-top: 1px solid #e4e7eb;
+      padding: 0.35rem 0.75rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-height: 1.4em;
+    }
+    @media (max-width: 768px) {
+      .map-picker { grid-template-columns: 1fr; }
+      .map-picker textarea { height: auto; }
+      .map-pane { height: 300px; }
+    }
 
     /* ---- Animated 7-node graph ---- */
     .graph-wrap {
@@ -283,7 +342,14 @@
       </div>
       <div class="field">
         <label for="pins">Pinned places</label>
-        <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
+        <div class="map-picker">
+          <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
+          <div class="map-pane">
+            <div class="map-label">Pick on map</div>
+            <div id="map" aria-label="Interactive map. Click to add a pin at that location; drag a pin to fix it."></div>
+            <div class="map-chip" id="map-chip" title="Nearest place to the last clicked point">Click the map to add a pin</div>
+          </div>
+        </div>
       </div>
       <button id="start-btn">Start Planning</button>
       <button id="delete-btn" class="delete-btn" style="display:none;">Delete Session</button>
@@ -866,6 +932,174 @@
         }
       }
     })();
+
+    /* ===================================================================
+       MAP PICKER — interactive map beside the pins textarea.
+       Self-contained, vanilla JS, Leaflet 1.9.4. Tolerates the geocode
+       endpoint being absent (local dev): click-to-insert is fully offline.
+       =================================================================== */
+    var map = null;              // L.Map instance
+    var markerLayer = null;      // L.LayerGroup holding all pin markers
+    var mapParseTimer = null;    // debounce timer for textarea -> markers
+
+    /* Pragmatic coordinate regex: matches `query=lat,lng`, `q=lat,lng`,
+       or `@lat,lng`. Capture 1 = prefix, 2 = lat, 3 = lng. */
+    var COORD_RE = /((?:query=|q=|@))(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/;
+
+    function extractCoords(line) {
+      var m = line.match(COORD_RE);
+      if (!m) return null;
+      return {
+        lat: parseFloat(m[2]),
+        lng: parseFloat(m[3]),
+        prefix: m[1],
+        index: m.index,
+        length: m[0].length
+      };
+    }
+
+    function fireInput(ta) {
+      try {
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (e) { /* input listener is optional; ignore */ }
+    }
+
+    /* Parse every textarea line; return {line,index,hasCoords,lat,lng}[] */
+    function parsePins() {
+      var lines = $("pins").value.split("\n");
+      var out = [];
+      for (var i = 0; i < lines.length; i++) {
+        var m = extractCoords(lines[i]);
+        out.push({
+          line: lines[i],
+          index: i,
+          hasCoords: !!m,
+          lat: m ? m.lat : null,
+          lng: m ? m.lng : null
+        });
+      }
+      return out;
+    }
+
+    /* Rebuild the marker layer from the textarea. Called ONLY from input
+       events (debounced), never from dragend, so we never rebuild while
+       the user is mid-drag. */
+    function rebuildMarkers() {
+      if (!map || !markerLayer) return;
+      markerLayer.clearLayers();
+      var parsed = parsePins();
+      for (var i = 0; i < parsed.length; i++) {
+        var p = parsed[i];
+        if (!p.hasCoords) continue;
+        var marker = L.marker([p.lat, p.lng], { draggable: true });
+        marker._pinLineIndex = p.index;
+        marker._pinLine = p.line;          // exact text parsed for this marker
+        var label = p.line.trim();
+        var popup = label.length > 40 ? label.slice(0, 40) + "…" : label;
+        marker.bindPopup(escapeHtml(popup));
+        marker.on("dragend", function(ev) { handleDragEnd(ev.target); });
+        marker.addTo(markerLayer);
+      }
+    }
+
+    /* On dragend, rewrite ONLY the dragged line's coords. Byte-identical
+       elsewhere. If the line moved/changed since parse, drop the edit. */
+    function handleDragEnd(marker) {
+      var idx = marker._pinLineIndex;
+      var latlng = marker.getLatLng();
+      var lines = $("pins").value.split("\n");
+      if (idx < 0 || idx >= lines.length) return;
+      var line = lines[idx];
+      /* The textarea changed since we parsed this marker (insert/reorder/
+         edit) -> do not corrupt a different line; drop the edit safely. */
+      if (line !== marker._pinLine) return;
+      var m = extractCoords(line);
+      if (!m) return; // the line's coordinate match is gone
+      var newLat = latlng.lat.toFixed(6);
+      var newLng = latlng.lng.toFixed(6);
+      var newLine = line.slice(0, m.index) + m.prefix + newLat + "," + newLng +
+                    line.slice(m.index + m.length);
+      lines[idx] = newLine;
+      var newValue = lines.join("\n");
+      if (newValue !== $("pins").value) {
+        $("pins").value = newValue;
+        fireInput($("pins"));
+      }
+    }
+
+    /* Insert a pin line instantly on map click (offline-safe: no network). */
+    function onMapClick(ev) {
+      var lat = ev.latlng.lat;
+      var lng = ev.latlng.lng;
+      var line = "https://www.google.com/maps/search/?api=1&query=" +
+                 lat.toFixed(6) + "," + lng.toFixed(6);
+      var ta = $("pins");
+      var val = ta.value;
+      if (val.length > 0 && !val.endsWith("\n")) {
+        ta.value = val + "\n" + line;
+      } else {
+        ta.value = val + line;
+      }
+      fireInput(ta);
+      enrichNearest(lat, lng);
+    }
+
+    /* Optional async enrichment of the chip near the map. Informational
+       only — never touches the textarea. Falls back to lat,lng. */
+    function enrichNearest(lat, lng) {
+      var chip = $("map-chip");
+      if (!chip) return;
+      chip.textContent = "nearest: " + lat.toFixed(6) + ", " + lng.toFixed(6);
+      var controller = new AbortController();
+      var timeout = setTimeout(function() { controller.abort(); }, 6000);
+      fetch("/api/planner?action=geocode&lat=" + encodeURIComponent(lat) +
+            "&lng=" + encodeURIComponent(lng), { signal: controller.signal })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          clearTimeout(timeout);
+          if (data && typeof data === "object") {
+            var label = (data.name != null && data.name !== "") ? data.name
+                       : (data.address != null && data.address !== "") ? data.address
+                       : null;
+            if (label) chip.textContent = "nearest: " + String(label);
+          }
+        })
+        .catch(function() { clearTimeout(timeout); }); // keep lat,lng fallback
+    }
+
+    /* Initialize the map once the DOM is ready. */
+    function initMapPicker() {
+      if (map) return;
+      if (typeof L === "undefined") {
+        var pane = $("map");
+        if (pane) pane.textContent = "Map unavailable (Leaflet failed to load).";
+        return;
+      }
+      map = L.map("map").setView([1.3521, 103.8198], 12);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+      markerLayer = L.layerGroup().addTo(map);
+      map.on("click", onMapClick);
+      rebuildMarkers();
+      /* Fix any zero-size timing issue and on viewport resize/column stack */
+      setTimeout(function() { if (map) map.invalidateSize(); }, 0);
+      window.addEventListener("resize", function() {
+        if (map) map.invalidateSize();
+      });
+    }
+
+    $("pins").addEventListener("input", function() {
+      if (mapParseTimer) clearTimeout(mapParseTimer);
+      mapParseTimer = setTimeout(rebuildMarkers, 300);
+    });
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initMapPicker);
+    } else {
+      initMapPicker();
+    }
   </script>
 </body>
 </html>
