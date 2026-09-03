@@ -163,6 +163,15 @@
     }
 
     /* ---- Animated 7-node graph ---- */
+    .graph-wrap.idle-state .graph-legend { opacity: 0.45; }
+    .graph-wrap.idle-state #graph-svg { opacity: 0.75; }
+    .graph-wrap.idle-state .node-rect, .graph-wrap.idle-state .node-circle {
+      animation: idle-breathe 3s ease-in-out infinite;
+    }
+    @keyframes idle-breathe {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 0.95; }
+    }
     .graph-wrap {
       background: rgba(255,255,255,0.92);
       border-radius: 16px;
@@ -375,7 +384,7 @@
   <div class="container">
     <a class="back-link" href="/">&#8592; Back to AI Playground</a>
     <h1>&#129518; Mr. Bounce</h1>
-    <p class="subtitle">CrewAI of 4 AI agents (3 tools) that turns your pinned places into an optimized day-by-day plan.</p>
+    <p class="subtitle">A 4-agent crew (3 tools) running a 7-node pipeline that turns your pinned places into an optimized day-by-day plan.</p>
 
     <!-- Intake form -->
     <div class="intake-form" id="intake">
@@ -418,7 +427,7 @@
     <div id="status-msg"></div>
 
     <!-- Animated 7-node graph -->
-    <div class="graph-wrap" id="graph-wrap" style="display:none;" aria-label="4-node CrewAI pipeline graph: Ingest, Scout, Logistics, Scheduler, Critic, Alternatives, Compiler">
+    <div class="graph-wrap idle-state" id="graph-wrap" aria-label="7-node crew pipeline graph: Ingest, Scout, Logistics, Scheduler, Critic, Alternatives, Compiler">
       <h3>Crew Pipeline</h3>
       <div class="graph-legend">
         <span><span class="swatch agent"></span>Agent node</span>
@@ -427,7 +436,7 @@
         <span><span class="swatch fail"></span>Failed</span>
         <span><span class="swatch retry"></span>Retry round</span>
       </div>
-      <svg id="graph-svg" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="4-node CrewAI pipeline with retry loop from Critic back to Scheduler"></svg>
+      <svg id="graph-svg" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="7-node crew pipeline with retry loop from Critic back to Scheduler"></svg>
     </div>
 
     <!-- Trace list -->
@@ -534,6 +543,7 @@
         var el = document.createElementNS(SVG_NS, shape);
         el.setAttribute("id", "node-" + j);
         el.setAttribute("class", (isTool ? "node-rect" : "node-circle") + " idle");
+        el.style.animationDelay = (j * 0.35) + "s";
 
         if (isTool) {
           el.setAttribute("x", nx);
@@ -929,7 +939,7 @@
         }
         sessionId = data.session_id;
         history.replaceState(null, "", "?session_id=" + encodeURIComponent(sessionId));
-        $("graph-wrap").style.display = "";
+        $("graph-wrap").classList.remove("idle-state");
         buildGraph();
         $("status-msg").textContent = "Session started. Running crew…";
         $("delete-btn").style.display = "";
@@ -953,7 +963,8 @@
       } catch (e) { /* ignore */ }
       sessionId = null;
       history.replaceState(null, "", location.pathname);
-      $("graph-wrap").style.display = "none";
+      $("graph-wrap").classList.add("idle-state");
+      buildGraph();
       $("trace").innerHTML = "";
       $("itinerary").innerHTML = "";
       $("markdown-out").innerHTML = "";
@@ -969,7 +980,7 @@
       var sid = params.get("session_id");
       if (sid) {
         sessionId = sid;
-        $("graph-wrap").style.display = "";
+        $("graph-wrap").classList.remove("idle-state");
         buildGraph();
         $("delete-btn").style.display = "";
         $("start-btn").disabled = true;
@@ -1297,7 +1308,7 @@
     });
 
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", initMapPicker);
+      document.addEventListener("DOMContentLoaded", function(){ initMapPicker(); buildGraph(); });
     } else {
       initMapPicker();
     }
