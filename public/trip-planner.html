@@ -52,12 +52,11 @@
     .intake-form .row { display: flex; gap: 1rem; }
     .intake-form .row > .field { flex: 1; }
 
-    /* ---- Map picker (beside the pins textarea) ---- */
+    /* ---- Map picker (pins textarea on top, map pane below) ---- */
     .map-picker {
       display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 1rem;
-      align-items: stretch;
     }
     .map-picker > * { min-width: 0; }
     .map-picker textarea { height: 160px; }
@@ -71,7 +70,6 @@
       border-radius: 8px;
       overflow: hidden;
       background: #fff;
-      height: 160px;
     }
     .map-pane .map-label {
       font-size: 0.85rem;
@@ -82,9 +80,64 @@
       background: #f9fafb;
       flex: none;
     }
-    .map-pane #map {
+    .map-pane .map-search {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #e4e7eb;
+      background: #f9fafb;
+      flex: none;
+      position: relative;
+    }
+    .map-pane .map-search input[type="text"] {
       flex: 1;
-      min-height: 0;
+      min-width: 0;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      color: #111;
+    }
+    .map-pane .map-search button {
+      flex: none;
+      padding: 0.45rem 0.9rem;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .map-pane .map-search button:hover { background: #1d4ed8; }
+    .map-pane .map-search button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .map-pane .map-search-results {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0.75rem;
+      right: 0.75rem;
+      z-index: 1000;
+      background: #fff;
+      border: 1px solid #e4e7eb;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .map-pane .map-search-row {
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+    }
+    .map-pane .map-search-row:hover { background: #eef2ff; }
+    .map-pane .map-search-name { font-size: 0.9rem; font-weight: 600; color: #1f2933; }
+    .map-pane .map-search-addr { font-size: 0.8rem; color: #6b7280; margin-top: 0.1rem; }
+    .map-pane .map-search-message { cursor: default; font-size: 0.85rem; color: #52606d; }
+    .map-pane #map {
+      height: 420px;
+      flex: 0 0 auto;
       z-index: 0;
     }
     .map-pane .leaflet-container {
@@ -106,7 +159,7 @@
     @media (max-width: 768px) {
       .map-picker { grid-template-columns: 1fr; }
       .map-picker textarea { height: auto; }
-      .map-pane { height: 300px; }
+      .map-pane #map { height: 300px; }
     }
 
     /* ---- Animated 7-node graph ---- */
@@ -346,6 +399,12 @@
           <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
           <div class="map-pane">
             <div class="map-label">Pick on map</div>
+            <div class="map-search" id="map-search">
+              <input type="text" id="map-search-input" autocomplete="off"
+                     placeholder="Search a place to pin, e.g. Maxwell Food Centre">
+              <button type="button" id="map-search-btn">Search</button>
+              <div class="map-search-results" id="map-search-results"></div>
+            </div>
             <div id="map" aria-label="Interactive map. Click to add a pin at that location; drag a pin to fix it."></div>
             <div class="map-chip" id="map-chip" title="Nearest place to the last clicked point">Click the map to add a pin</div>
           </div>
@@ -941,6 +1000,7 @@
     var map = null;              // L.Map instance
     var markerLayer = null;      // L.LayerGroup holding all pin markers
     var mapParseTimer = null;    // debounce timer for textarea -> markers
+    var searchController = null;  // AbortController for the in-flight search request
 
     /* Pragmatic coordinate regex: matches `query=lat,lng`, `q=lat,lng`,
        or `@lat,lng`. Capture 1 = prefix, 2 = lat, 3 = lng. */
@@ -1027,10 +1087,11 @@
       }
     }
 
-    /* Insert a pin line instantly on map click (offline-safe: no network). */
-    function onMapClick(ev) {
-      var lat = ev.latlng.lat;
-      var lng = ev.latlng.lng;
+    /* Shared pin-line insert: builds the Google Maps search link with 6-decimal
+       lat,lng (byte-identical for map clicks and search-result picks), appends
+       it to #pins with the same newline rules, and fires the input event so markers
+       rebuild. Does NOT touch the chip — callers own any enrichment. */
+    function insertPinLine(lat, lng) {
       var line = "https://www.google.com/maps/search/?api=1&query=" +
                  lat.toFixed(6) + "," + lng.toFixed(6);
       var ta = $("pins");
@@ -1041,6 +1102,15 @@
         ta.value = val + line;
       }
       fireInput(ta);
+      return line;
+    }
+
+    /* Insert a pin line instantly on map click (offline-safe: no network).
+       The chip enrichment is a separate async, optional step. */
+    function onMapClick(ev) {
+      var lat = ev.latlng.lat;
+      var lng = ev.latlng.lng;
+      insertPinLine(lat, lng);
       enrichNearest(lat, lng);
     }
 
@@ -1065,6 +1135,112 @@
           }
         })
         .catch(function() { clearTimeout(timeout); }); // keep lat,lng fallback
+    }
+
+    /* ---- Map search (Google-Maps-style): find a named place and pin it ----
+       Fires only on explicit user action (Enter / Search click), reads the
+       city fresh from #dest each call, and degrades gracefully to an inline
+       dropdown message if the search endpoint is missing. */
+
+    function closeSearchDropdown() {
+      var dd = $("map-search-results");
+      if (dd) dd.style.display = "none";
+    }
+
+    function renderSearchMessage(text) {
+      var dd = $("map-search-results");
+      if (!dd) return;
+      dd.innerHTML = "";
+      var row = document.createElement("div");
+      row.className = "map-search-row map-search-message";
+      row.textContent = text;
+      dd.appendChild(row);
+      dd.style.display = "block";
+    }
+
+    function renderSearchResults(results) {
+      var dd = $("map-search-results");
+      if (!dd) return;
+      dd.innerHTML = "";
+      for (var i = 0; i < results.length; i++) {
+        (function(r) {
+          var row = document.createElement("div");
+          row.className = "map-search-row";
+          var nameEl = document.createElement("div");
+          nameEl.className = "map-search-name";
+          nameEl.textContent = r.name || "Unnamed place";
+          row.appendChild(nameEl);
+          if (r.address) {
+            var addrEl = document.createElement("div");
+            addrEl.className = "map-search-addr";
+            addrEl.textContent = r.address;
+            row.appendChild(addrEl);
+          }
+          row.addEventListener("click", function() { onSearchResultClick(r); });
+          dd.appendChild(row);
+        })(results[i]);
+      }
+      dd.style.display = "block";
+    }
+
+    /* Run the search. The city is read fresh from #dest every time — never
+       cached. Button is disabled + relabeled while in flight and restored
+       after. A newer search supersedes an older one (its render is skipped). */
+    async function searchPlaces() {
+      var input = $("map-search-input");
+      var q = input ? input.value.trim() : "";
+      if (!q) { closeSearchDropdown(); return; }
+      var city = ($("dest").value || "").trim();
+      var url = "/api/planner?action=search&q=" + encodeURIComponent(q) +
+                "&city=" + encodeURIComponent(city);
+      var btn = $("map-search-btn");
+      if (btn) { btn.disabled = true; btn.textContent = "Searching…"; }
+      if (searchController) searchController.abort();
+      var controller = new AbortController();
+      searchController = controller;
+      var timeout = setTimeout(function() { controller.abort(); }, 8000);
+      var data = null;
+      var ok = false;
+      try {
+        var r = await fetch(url, { signal: controller.signal });
+        if (!r.ok) throw new Error("search_failed");
+        data = await r.json();
+        ok = true;
+      } catch (e) {
+        ok = false; // network error, abort (8s timeout), or non-JSON body
+      }
+      clearTimeout(timeout);
+      if (searchController !== controller) return; // superseded by a newer search
+      searchController = null;
+      if (btn) { btn.disabled = false; btn.textContent = "Search"; }
+      if (!ok || !data || typeof data !== "object" || !Array.isArray(data.results)) {
+        renderSearchMessage("Search unavailable — try again");
+        return;
+      }
+      if (data.results.length === 0) {
+        renderSearchMessage("No matches found");
+        return;
+      }
+      renderSearchResults(data.results.slice(0, 6));
+    }
+
+    /* Pick a result row: fly to it (when the map loaded), insert the pin line
+       via the shared insert path, tag the chip with the found name (no
+       reverse-geocode fetch needed), close the dropdown, then clear + refocus
+       the input. Null coordinates -> just close. */
+    function onSearchResultClick(result) {
+      closeSearchDropdown();
+      var lat = result && result.lat != null ? parseFloat(result.lat) : NaN;
+      var lng = result && result.lng != null ? parseFloat(result.lng) : NaN;
+      if (isNaN(lat) || isNaN(lng)) return; // null coords -> just close
+      if (map) map.flyTo([lat, lng], 16);
+      insertPinLine(lat, lng);
+      var name = (result.name != null && result.name !== "") ? result.name
+               : (result.address != null && result.address !== "") ? result.address : null;
+      var chip = $("map-chip");
+      if (chip) chip.textContent = "nearest: " + (name || lat.toFixed(6) + ", " + lng.toFixed(6));
+      var input = $("map-search-input");
+      if (input) { input.value = ""; input.focus(); }
     }
 
     /* Initialize the map once the DOM is ready. */
@@ -1093,6 +1269,31 @@
     $("pins").addEventListener("input", function() {
       if (mapParseTimer) clearTimeout(mapParseTimer);
       mapParseTimer = setTimeout(rebuildMarkers, 300);
+    });
+
+    /* ---- Map search event wiring ---- */
+    var searchBtn = $("map-search-btn");
+    var searchInput = $("map-search-input");
+    if (searchBtn) {
+      searchBtn.addEventListener("click", function() { searchPlaces(); });
+    }
+    if (searchInput) {
+      searchInput.addEventListener("keydown", function(ev) {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          searchPlaces();
+        }
+      });
+    }
+    /* Clicking anywhere outside the search row closes the dropdown. */
+    document.addEventListener("click", function(ev) {
+      var wrap = $("map-search");
+      if (wrap && wrap.contains(ev.target)) return;
+      closeSearchDropdown();
+    });
+    /* Escape closes the dropdown. */
+    document.addEventListener("keydown", function(ev) {
+      if (ev.key === "Escape") closeSearchDropdown();
     });
 
     if (document.readyState === "loading") {
