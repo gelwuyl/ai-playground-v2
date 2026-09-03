@@ -13,11 +13,49 @@ from services.planner_agents import (
     render_itinerary_md,
     _assemble_itinerary_json,
     run_scout,
+    run_reasoner,
     run_critic,
     run_alternatives,
     run_compiler,
     SCOUT_DEFAULTS,
 )
+
+
+def _inject_scout_tools(ctx: dict) -> None:
+    """Give a scout ctx a runner-style ``_call_tool`` dispatcher (offline).
+
+    ``ingest`` is a no-op passthrough (pins are pre-seeded in these fixtures);
+    ``hours`` delegates to the real ``hours_tool`` against the mocked
+    SerpApi/LLM so the full research path is exercised.
+    """
+    from services.planner_agents import hours_tool
+
+    def fake_tool(name, *args, **kwargs):
+        if name == "ingest":
+            return {"ingested": len(ctx.get("pins") or [])}
+        if name == "hours":
+            return hours_tool(ctx, kwargs.get("pin"))
+        raise KeyError(name)
+
+    ctx["_call_tool"] = fake_tool
+
+
+def _inject_reasoner_tools(ctx: dict) -> None:
+    """Give a reasoner ctx a runner-style ``_call_tool`` dispatcher (offline).
+
+    ``logistics`` is a no-op; ``scheduler`` is a pass-through that returns the
+    fixture's schedule unchanged so the LLM review drives the assertions.
+    """
+
+    def fake_tool(name, *args, **kwargs):
+        if name == "logistics":
+            ctx.setdefault("legs", [])
+            return {"legs_count": len(ctx["legs"])}
+        if name == "scheduler":
+            return ctx.get("schedule") or {}
+        raise KeyError(name)
+
+    ctx["_call_tool"] = fake_tool
 
 
 # ---------------------------------------------------------------------------
@@ -590,11 +628,12 @@ class TestCriticDeterministic:
             "call_openrouter_json",
             lambda *a, **kw: {"verdict": "PASS"},
         )
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "ISSUES"
         # The issue should mention the meal
         assert any("meal" in i["message"].lower() for i in output["issues"])
-        assert ctx["critic"] == output
+        assert ctx["reasoner"] == output
 
     def test_llm_failure_defaults_pass_with_det_issues(self, monkeypatch):
         """LLM failure -> PASS with critic_error, unless det finds issues."""
@@ -644,10 +683,11 @@ class TestCriticDeterministic:
             raise ValueError("LLM unavailable")
 
         monkeypatch.setattr(planner_agents, "call_openrouter_json", raise_fn)
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "PASS"
-        assert "critic_error" in output
-        assert any("critic:" in e for e in ctx["errors"])
+        assert any("reasoner: LLM review failed" in e for e in ctx["errors"])
+        assert any("reasoner" in e for e in ctx["errors"])
 
     def test_pass_when_no_issues(self, monkeypatch):
         """Normal short day with a meal -> PASS."""
@@ -706,6 +746,7 @@ class TestCriticDeterministic:
             "call_openrouter_json",
             lambda *a, **kw: {"verdict": "PASS"},
         )
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "PASS"
         assert output["issues"] == []
@@ -773,6 +814,7 @@ class TestRunScout:
         original = sys.modules.get("services.planner_serp")
         sys.modules["services.planner_serp"] = MockSerp
         try:
+            _inject_scout_tools(ctx)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -854,6 +896,7 @@ class TestRunScout:
                 "current_node": "scout",
                 "errors": [],
             }
+            _inject_scout_tools(ctx)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -868,7 +911,7 @@ class TestRunScout:
         r2 = ctx["research"][1]
         assert r2["dwell_minutes"] == SCOUT_DEFAULTS["dwell_minutes"]
         # Error logged
-        assert any("scout: LLM fallback" in e for e in ctx["errors"])
+        assert any("LLM fallback" in e for e in ctx["errors"])
 
     def test_unresolved_pins_skipped(self):
         """Unresolved pins are not researched."""
@@ -916,6 +959,7 @@ class TestRunScout:
                 "booking_required": False,
                 "tip": "Book ahead",
             }
+            _inject_scout_tools(ctx)
             result = run_scout(ctx)
         finally:
             if original is not None:

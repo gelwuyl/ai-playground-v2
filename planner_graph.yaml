@@ -1,53 +1,66 @@
-# Mr. Bounce — Trip Orchestrator graph definition.
+# Mr. Bounce — Trip Orchestrator graph definition (Reasoner Crew v2).
 #
-# Declarative description of the 7-node crew consumed by the runner in
+# Declarative description of the 4-agent crew consumed by the runner in
 # services/planner_graph.py.  The runner loads and validates this file at
 # import/run time so the graph topology stays config-driven.
 #
-# Backbone: ingest -> scout -> logistics -> scheduler -> critic
-#           -> alternatives -> compiler (sequential)
-# One conditional loop edge: critic FAIL routes back to scheduler,
-# bounded at max_critic_rounds (3 rounds: critic_round 0, 1, 2 allowed;
-# if the 3rd critic run still fails, the graph force-proceeds forward
-# to alternatives — never loops forever).
+# Topology — tools are OWNED BY AGENTS, no longer standalone pipeline steps:
+#
+#   scout        (agent; owns tools: ingest, hours)
+#     |--> reasoner (agent; owns tools: logistics, scheduler)
+#            |--> alternatives (agent; advisor, no tools)
+#                   |--> compiler (agent; terminal, no tools)
+#
+# The Reasoner runs a draft -> review -> re-draft loop INSIDE its own turn
+# (bounded by max_reasoner_rounds; at the cap it force-proceeds with issues
+# surfaced — never loops forever).  Each tool invocation inside an agent turn
+# emits its OWN trace row (node_type "tool", node_name "{agent}.{tool}",
+# plus a "parent" field naming the owning agent) so the pipeline visualization
+# shows tools lighting up under their agent.
+#
+# Two bounded CONDITIONAL edges, both returning to the Reasoner so they can
+# never loop forever:
+#   1. reasoner -> scout,         when=re_research (non-empty list; thrown
+#      back only when data is missing), max 1 throw-back per run
+#      (re_research_round counter).  "back: reasoner" sends Scout's fresh
+#      research back for one more Reasoner draft.
+#   2. reasoner -> alternatives,  when=consult_alternatives (true; stuck day
+#      only), max 1 consult total (consult_round counter).  "back: reasoner"
+#      returns the Alternatives advisor's swaps for one more Reasoner draft.
+#
+# Edge-level conditions are evaluated in YAML order; the first match whose
+# round budget is not exhausted wins.  The first edge WITHOUT a "when" is the
+# fallback (proceed forward through the backbone).
+#
+# YAML style note: "on"/"pass_value" keys elsewhere in this repo are quoted
+# because a bare `on` parses as True; the same quoting convention is kept for
+# any boolean-ish keys here (no node-level conditional block is needed — both
+# PASS and ISSUES verdicts proceed to alternatives, so routing is edge-driven).
 
 name: mr-bounce-trip-orchestrator
-entry: ingest
-max_critic_rounds: 3
+entry: scout
+max_reasoner_rounds: 3
 nodes:
-  - name: ingest
-    type: tool
-    title: Ingest pins
   - name: scout
     type: agent
-    title: Scout research (per pin)
-    fanout: per_pin
-  - name: logistics
-    type: tool
-    title: Leg-time logistics
-  - name: scheduler
-    type: tool
-    title: Deterministic scheduler
-  - name: critic
+    title: Scout — per-pin research
+    tools: [ingest, hours]
+  - name: reasoner
     type: agent
-    title: Critic audit
-    conditional:
-      "on": verdict          # output dict key inspected (quoted: YAML treats bare on as True)
-      pass_value: PASS
-      pass_next: alternatives
-      fail_next: scheduler
+    title: Reasoner — causal logistics audit
+    tools: [logistics, scheduler]
+    round_key: reasoner_round
   - name: alternatives
     type: agent
-    title: Alternatives
+    title: Alternatives — swap advisor
   - name: compiler
     type: agent
-    title: Compiler
+    title: Compiler — final assembly
     terminal: true
 edges:
-  - {from: ingest, to: scout}
-  - {from: scout, to: logistics}
-  - {from: logistics, to: scheduler}
-  - {from: scheduler, to: critic}
-  - {from: critic, to: alternatives, when: pass}
-  - {from: critic, to: scheduler, when: fail, max_rounds: 3}
+  # Conditional edges first (evaluated in order), then the fallback edges.
+  - {from: reasoner, to: scout, when: re_research, counter: re_research_round, max_rounds: 1, back: reasoner}
+  - {from: reasoner, to: alternatives, when: consult_alternatives, counter: consult_round, max_rounds: 1, back: reasoner}
+  - {from: scout, to: reasoner}
+  - {from: reasoner, to: alternatives}
   - {from: alternatives, to: compiler}
