@@ -209,9 +209,14 @@ class TestGeocodeFallback:
         assert result["lat"] == pytest.approx(1.2816)
 
     def test_geocode_fails_returns_coords_with_none_name(self, monkeypatch):
-        """When geocode fails and coords are available, return coords with name=None."""
+        """Geocode fails + coords available -> coords kept, name from the
+        Nominatim reverse fallback (or None when that also fails)."""
         # No planner_serp in sys.modules -> import fails -> geocode skipped.
         monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+        # Nominatim unreachable in tests -> name stays None, coords survive.
+        monkeypatch.setattr(
+            "services.planner_ingest._nominatim_reverse", lambda lat, lng: None
+        )
 
         coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
                   "_coords_only": True}
@@ -224,6 +229,25 @@ class TestGeocodeFallback:
         assert result["name"] is None
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+
+    def test_geocode_fails_nominatim_names_the_pin(self, monkeypatch):
+        """Geocode fails -> Nominatim reverse supplies a readable name."""
+        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+        monkeypatch.setattr(
+            "services.planner_ingest._nominatim_reverse",
+            lambda lat, lng: {"name": "Jalan Besar (1.2816, 103.8636)",
+                              "address": "Jalan Besar, Singapore"},
+        )
+        coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
+                  "_coords_only": True}
+        result = _geocode_fallback(
+            "https://www.google.com/maps/@1.2816,103.8636,15z",
+            "Singapore",
+            coords=coords,
+        )
+        assert result is not None
+        assert "Jalan Besar" in result["name"]
+        assert result["name_source"] == "nominatim"
 
     def test_geocode_fails_no_coords_returns_none(self, monkeypatch):
         """When geocode fails and no coords, return None."""

@@ -239,16 +239,49 @@ def _geocode_fallback(final_url: str, city: str,
             except Exception:
                 pass
 
-    # Geocode failed or unavailable. If we have coords, return them with
-    # name=None so run_ingest persists the pin with a resolve_error.
-    if coords and (coords.get("lat") is not None or coords.get("lng") is not None):
+    # Geocode failed or unavailable (e.g. SerpApi 429). Free fallback:
+    # Nominatim reverse geocode gives a readable street/area name so the
+    # pin isn't persisted as a raw URL. Graceful: None on any failure.
+    if coords and coords.get("lat") is not None and coords.get("lng") is not None:
+        nominatim = _nominatim_reverse(coords["lat"], coords["lng"])
         return {
-            "name": None,
+            "name": (nominatim or {}).get("name"),
             "lat": coords.get("lat"),
             "lng": coords.get("lng"),
-            "address": None,
+            "address": (nominatim or {}).get("address"),
+            "name_source": "nominatim" if nominatim else None,
         }
     return None
+
+
+def _nominatim_reverse(lat: float, lng: float) -> dict | None:
+    """Reverse geocode via OSM Nominatim (free, no key; 1 req/s policy).
+
+    Returns {"name": short label, "address": full display name} or None.
+    Never raises. Used only as a fallback when SerpApi naming fails.
+    """
+    try:
+        import httpx
+        resp = httpx.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lng, "format": "json", "zoom": 18},
+            headers={"User-Agent": "MrBounceTripPlanner/1.0 (personal project)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        display = data.get("display_name")
+        if not display:
+            return None
+        addr = data.get("address") or {}
+        short = (addr.get("amenity") or addr.get("shop") or addr.get("road")
+                 or addr.get("suburb") or addr.get("city") or "")
+        return {
+            "name": f"{short} ({lat:.4f}, {lng:.4f})" if short else f"Pin @ {lat:.4f}, {lng:.4f}",
+            "address": display,
+        }
+    except Exception:
+        return None
 
 
 def resolve_short_link(url: str, city: str) -> dict | None:
