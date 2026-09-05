@@ -134,6 +134,13 @@ _DAY_KEYS = {
     "sunday": "6",
 }
 
+# OSM two-letter day selectors (Overpass opening_hours) -> Monday-based index.
+_OSM_DAY_IDX = {
+    "Mo": 0, "Tu": 1, "We": 2, "Th": 3, "Fr": 4, "Sa": 5, "Su": 6,
+}
+_OSM_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday",
+                  "friday", "saturday", "sunday")
+
 
 # ==============================================================================
 # parse_raw_hours — pure, deterministic, unit-testable
@@ -296,8 +303,47 @@ def parse_raw_hours(raw: dict | None) -> dict:
                 if value is not None:
                     merged[str(day).strip().lower()] = value
         raw = merged or None
+    if isinstance(raw, str):
+        # OSM opening_hours string (Overpass source): "Mo-Su 07:00-22:00",
+        # "Mo-Fr 09:00-18:00; Sa 10:00-14:00", "24/7", or a bare daily
+        # window "07:00-22:00". Expand into per-day entries.
+        raw = {"osm": raw}
     if not raw or not isinstance(raw, dict):
         return {"days": {}}
+
+    # OSM opening_hours syntax (Overpass source): "Mo-Su 07:00-22:00",
+    # "Mo-Fr 09:00-18:00; Sa 10:00-14:00", "24/7". Expand each selector
+    # into per-day entries so the day-loop below can parse them.
+    if not any(k in raw for k in _DAY_KEYS):
+        expanded: dict = {}
+        osm_str = str(next(iter(raw.values()))) if len(raw) == 1 else ""
+        for part in osm_str.split(";"):
+            part = part.strip()
+            m = re.match(
+                r"^(?:(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?)\s+(.*)$",
+                part, re.IGNORECASE,
+            )
+            if m:
+                start_i = _OSM_DAY_IDX[m.group(1).title()]
+                end_i = _OSM_DAY_IDX[m.group(2).title()] if m.group(2) else start_i
+                if end_i < start_i:
+                    end_i += 7  # wraps the week (e.g. Fr-Mo)
+                for i in range(start_i, end_i + 1):
+                    # Key by day NAME (the day-loop below looks up raw[day_name]).
+                    expanded[_OSM_DAY_NAMES[i % 7]] = m.group(3)
+            elif part.lower() in ("24/7", "24/7 opening"):
+                for day in _OSM_DAY_NAMES:
+                    expanded[day] = "Open 24 hours"
+            else:
+                # Bare time range "07:00-22:00" or "09:00-18:00": same window
+                # every day (OSM omits the selector when it applies daily).
+                if re.match(r"^\d{1,2}:\d{2}\s*-\s*", part):
+                    for day in _OSM_DAY_NAMES:
+                        expanded[day] = part
+        if expanded:
+            raw = expanded
+        else:
+            return {"days": {}}
 
     days: dict[str, list[dict]] = {}
     for day_name, day_idx in _DAY_KEYS.items():

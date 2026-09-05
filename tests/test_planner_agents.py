@@ -197,6 +197,47 @@ class TestParseRawHours:
         assert "0" not in result["days"]
         assert "1" in result["days"]
 
+    # -- OSM opening_hours syntax (Overpass source) ----------------------------
+    def test_osm_mo_su_selector(self):
+        """'Mo-Su 07:00-22:00' expands to all 7 days."""
+        result = parse_raw_hours("Mo-Su 07:00-22:00")
+        assert len(result["days"]) == 7
+        assert result["days"]["0"] == [{"open": "07:00", "close": "22:00"}]
+        assert result["days"]["6"] == [{"open": "07:00", "close": "22:00"}]
+
+    def test_osm_multi_selector_semicolons(self):
+        """'Mo-Fr 09:00-18:00; Sa 10:00-14:00' -> per-selector days, Sunday absent."""
+        result = parse_raw_hours("Mo-Fr 09:00-18:00; Sa 10:00-14:00")
+        assert result["days"]["0"] == [{"open": "09:00", "close": "18:00"}]
+        assert result["days"]["5"] == [{"open": "10:00", "close": "14:00"}]
+        assert "6" not in result["days"]
+
+    def test_osm_single_day_selector(self):
+        """'Mo 09:00-12:00' -> Monday only."""
+        result = parse_raw_hours("Mo 09:00-12:00")
+        assert result["days"] == {"0": [{"open": "09:00", "close": "12:00"}]}
+
+    def test_osm_week_wrap(self):
+        """'Fr-Mo 08:00-20:00' wraps the week: Fri, Sat, Sun, Mon."""
+        result = parse_raw_hours("Fr-Mo 08:00-20:00")
+        assert sorted(result["days"].keys()) == ["0", "4", "5", "6"]
+
+    def test_osm_24_7(self):
+        """'24/7' -> 00:00-23:59 every day."""
+        result = parse_raw_hours("24/7")
+        assert len(result["days"]) == 7
+        assert result["days"]["3"] == [{"open": "00:00", "close": "23:59"}]
+
+    def test_osm_bare_daily_window(self):
+        """'07:00-22:00' with no selector -> same window every day."""
+        result = parse_raw_hours("07:00-22:00")
+        assert len(result["days"]) == 7
+        assert result["days"]["5"] == [{"open": "07:00", "close": "22:00"}]
+
+    def test_osm_unparseable_returns_empty(self):
+        """Gibberish OSM string -> empty days, never raises."""
+        assert parse_raw_hours("gibberish-rule") == {"days": {}}
+
     def test_all_seven_days(self):
         """Full week of values, verify day-key mapping 0=Mon..6=Sun."""
         raw = {
