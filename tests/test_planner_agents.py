@@ -21,14 +21,21 @@ from services.planner_agents import (
 )
 
 
-def _inject_scout_tools(ctx: dict) -> None:
+def _inject_scout_tools(ctx: dict, monkeypatch=None) -> None:
     """Give a scout ctx a runner-style ``_call_tool`` dispatcher (offline).
 
     ``ingest`` is a no-op passthrough (pins are pre-seeded in these fixtures);
     ``hours`` delegates to the real ``hours_tool`` against the mocked
-    SerpApi/LLM so the full research path is exercised.
+    SerpApi/LLM so the full research path is exercised. When a monkeypatch
+    fixture is supplied, the Overpass hours fallback is also disabled so the
+    no-SerpApi cases stay offline.
     """
     from services.planner_agents import hours_tool
+
+    if monkeypatch is not None:
+        import services.planner_free_geo as free_geo
+        monkeypatch.setattr(free_geo, "overpass_hours",
+                            lambda lat, lng, name: None)
 
     def fake_tool(name, *args, **kwargs):
         if name == "ingest":
@@ -814,7 +821,7 @@ class TestRunScout:
         original = sys.modules.get("services.planner_serp")
         sys.modules["services.planner_serp"] = MockSerp
         try:
-            _inject_scout_tools(ctx)
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -896,7 +903,7 @@ class TestRunScout:
                 "current_node": "scout",
                 "errors": [],
             }
-            _inject_scout_tools(ctx)
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -913,7 +920,7 @@ class TestRunScout:
         # Error logged
         assert any("LLM fallback" in e for e in ctx["errors"])
 
-    def test_unresolved_pins_skipped(self):
+    def test_unresolved_pins_skipped(self, monkeypatch):
         """Unresolved pins are not researched."""
         from services import planner_agents
         import sys
@@ -959,7 +966,7 @@ class TestRunScout:
                 "booking_required": False,
                 "tip": "Book ahead",
             }
-            _inject_scout_tools(ctx)
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:

@@ -88,8 +88,10 @@ def _city_ll(city: str) -> str | None:
 # Public API
 # ---------------------------------------------------------------------------
 def geocode_place(name: str, city: str) -> dict | None:
-    """Geocode a place via SerpApi Google Maps engine. Returns None on any failure.
+    """Geocode a place: Photon (free) -> Nominatim (free) -> SerpApi (paid).
 
+    The free stack is tried FIRST so routine runs spend no quota; SerpApi
+    remains the last resort for names the OSM POI index cannot resolve.
     Returns dict with keys: name, lat, lng, address, place_id, raw_hours.
     """
     global LAST_ERROR
@@ -107,9 +109,24 @@ def geocode_place(name: str, city: str) -> dict | None:
             "raw_hours": entry.get("raw_hours"),
         }
 
+    # --- Free geocoders first (keyless, no quota) ---
+    from services.planner_free_geo import nominatim_geocode, photon_geocode
+    for free_fn in (photon_geocode, nominatim_geocode):
+        result = free_fn(name, city)
+        if result and result.get("lat") is not None:
+            return {
+                "name": result.get("name") or name,
+                "lat": result.get("lat"),
+                "lng": result.get("lng"),
+                "address": result.get("address"),
+                "place_id": None,
+                "raw_hours": None,
+                "geocode_source": "photon" if free_fn is photon_geocode else "nominatim",
+            }
+
     key = _serp_key()
     if not key:
-        print("geocode_place: SERPAPI_KEY not set")
+        print("geocode_place: SERPAPI_KEY not set (free geocoders already tried)")
         LAST_ERROR = "SERPAPI_KEY not set"
         return None
 

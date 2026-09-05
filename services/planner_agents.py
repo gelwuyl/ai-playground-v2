@@ -400,27 +400,36 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
     name = pin.get("name", "Unknown")
     pin_id = pin.get("pin_id", "")
 
-    # --- SerpApi structured data ---
+    # --- SerpApi structured data (geocode falls back to Photon/Nominatim) ---
     geo = planner_serp.geocode_place(name, city)
     lat = None
     lng = None
     address = None
     place_id = None
+    geocode_source = None
 
     if geo:
         lat = geo.get("lat") or pin.get("lat")
         lng = geo.get("lng") or pin.get("lng")
         address = geo.get("address") or pin.get("address")
         place_id = geo.get("place_id")
+        geocode_source = geo.get("geocode_source") or ("serpapi" if geo.get("place_id") else None)
     else:
         lat = pin.get("lat")
         lng = pin.get("lng")
         address = pin.get("address")
 
-    # Hours
+    # Hours: SerpApi first; if that yields nothing, best-effort Overpass (OSM).
     raw_hours = None
+    hours_source = "serpapi"
     if place_id or name:
         raw_hours = planner_serp.place_hours(name, city, place_id)
+    if not raw_hours and lat is not None and lng is not None:
+        from services.planner_free_geo import overpass_hours
+        osm = overpass_hours(lat, lng, name)
+        if osm:
+            raw_hours = osm["hours"]
+            hours_source = "osm"
 
     opening_hours = parse_raw_hours(raw_hours)
     hours_verified = bool(opening_hours["days"])
@@ -495,8 +504,10 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
         "lng": lng,
         "address": address,
         "rating": None,
+        "geocode_source": geocode_source,
         "opening_hours": opening_hours,
         "hours_verified": hours_verified,
+        "hours_source": hours_source,
         "hours_error": hours_error,
         "raw_hours_shape": raw_hours_shape,
         "category": category,
@@ -553,8 +564,10 @@ def _scout_fallback_result(pin: dict) -> dict:
         "lng": pin.get("lng"),
         "address": pin.get("address"),
         "rating": None,
+        "geocode_source": None,
         "opening_hours": {"days": {}},
         "hours_verified": False,
+        "hours_source": None,
         "category": SCOUT_DEFAULTS["category"],
         "dwell_minutes": SCOUT_DEFAULTS["dwell_minutes"],
         "booking_required": SCOUT_DEFAULTS["booking_required"],
@@ -604,6 +617,8 @@ def run_scout(ctx: dict) -> dict:
         "hours_diagnostics": [
             {
                 "name": r.get("name"),
+                "hours_source": r.get("hours_source"),
+                "geocode_source": r.get("geocode_source"),
                 "hours_error": r.get("hours_error"),
                 "raw_hours_shape": r.get("raw_hours_shape"),
             }
