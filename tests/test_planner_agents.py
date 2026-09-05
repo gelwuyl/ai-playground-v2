@@ -405,6 +405,33 @@ class TestRenderItineraryMd:
         assert isinstance(md, str)
         assert "Trip" in md
 
+    def test_directions_url_link_in_md(self):
+        """Days with directions_url get a Google Maps link in the markdown."""
+        itin = {
+            "trip": {
+                "city": "Test City",
+                "days": [
+                    {
+                        "day_index": 0,
+                        "date": "2026-01-01",
+                        "theme": "Day 1",
+                        "stops": [],
+                        "directions_url": "https://www.google.com/maps/dir/?api=1&origin=1.0%2C103.0",
+                    },
+                    {
+                        "day_index": 1,
+                        "date": "2026-01-02",
+                        "theme": "Day 2",
+                        "stops": [],
+                        "directions_url": "",
+                    },
+                ],
+            }
+        }
+        md = render_itinerary_md(itin)
+        assert "[Open this day's route in Google Maps]" in md
+        assert md.count("maps/dir/") == 1  # only the day that has a URL
+
     def test_no_alternatives(self):
         """Itinerary without alternatives section."""
         itin = {
@@ -437,6 +464,45 @@ class TestRenderItineraryMd:
 # ---------------------------------------------------------------------------
 # run_compiler assembly tests
 # ---------------------------------------------------------------------------
+class TestDirectionsUrl:
+    """_directions_url: Google Maps URL following a day's stops in order."""
+
+    def test_two_stops_origin_destination(self):
+        from services.planner_agents import _directions_url
+        url = _directions_url([
+            {"name": "A", "lat": 1.2816, "lng": 103.8636},
+            {"name": "B", "lat": 1.2839, "lng": 103.8591},
+        ])
+        assert url.startswith("https://www.google.com/maps/dir/?api=1")
+        assert "origin=1.281600%2C103.863600" in url
+        assert "destination=1.283900%2C103.859100" in url
+        assert "waypoints" not in url
+
+    def test_three_stops_waypoint_in_order(self):
+        from services.planner_agents import _directions_url
+        url = _directions_url([
+            {"lat": 1.0, "lng": 103.0},
+            {"lat": 1.1, "lng": 103.1},
+            {"lat": 1.2, "lng": 103.2},
+        ])
+        assert "waypoints=1.100000%2C103.100000" in url
+        assert url.index("origin=") < url.index("destination=") < url.index("waypoints=")
+
+    def test_null_coords_stops_skipped(self):
+        from services.planner_agents import _directions_url
+        url = _directions_url([
+            {"lat": 1.0, "lng": 103.0},
+            {"lat": None, "lng": None},
+            {"lat": 1.2, "lng": 103.2},
+        ])
+        assert "waypoints" not in url  # middle stop dropped -> 2 points
+        assert "destination=1.200000%2C103.200000" in url
+
+    def test_fewer_than_two_coords_returns_empty(self):
+        from services.planner_agents import _directions_url
+        assert _directions_url([{"lat": 1.0, "lng": 103.0}]) == ""
+        assert _directions_url([]) == ""
+        assert _directions_url([{"lat": None, "lng": None}]) == ""
 def _make_ctx_for_compiler():
     """Build a minimal ctx fixture for compiler tests."""
     return {

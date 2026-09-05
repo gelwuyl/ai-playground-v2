@@ -402,6 +402,21 @@
       vertical-align: middle; }
 
     #markdown-out { margin-top: 1.5rem; }
+    #markdown-out .md-head { display: flex; align-items: center; gap: 0.75rem; }
+    #markdown-out .copy-btn {
+      background: #2563eb; color: #fff; border: none; border-radius: 8px;
+      padding: 0.35rem 0.9rem; font-size: 0.85rem; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    #markdown-out .copy-btn:hover { background: #1d4ed8; }
+    #markdown-out .copy-btn.copied { background: #16a34a; }
+    #markdown-out .route-link, .day-card .route-link {
+      display: inline-block; margin: 0 0 0.75rem; color: #1d4ed8;
+      font-weight: 600; font-size: 0.9rem; text-decoration: none;
+      border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px;
+      padding: 0.35rem 0.75rem;
+    }
+    .day-card .route-link:hover { background: #dbeafe; }
     #markdown-out pre {
       white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
       background: rgba(255,255,255,0.92); color: #111; border-radius: 12px;
@@ -1006,13 +1021,58 @@
     }
 
     /* ---- Render itinerary ---- */
+    /* Clipboard fallback for non-secure contexts / older browsers. */
+    function legacyCopy(text) {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;opacity:0;";
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+
     function renderItinerary(itin, markdown) {
       var out = $("itinerary");
       out.innerHTML = "";
 
       if (markdown) {
         var mdOut = $("markdown-out");
-        mdOut.innerHTML = "<h2>Full Itinerary</h2>";
+        mdOut.innerHTML = "";
+
+        var head = document.createElement("div");
+        head.className = "md-head";
+        var h2 = document.createElement("h2");
+        h2.textContent = "Full Itinerary";
+        head.appendChild(h2);
+        var copyBtn = document.createElement("button");
+        copyBtn.className = "copy-btn";
+        copyBtn.textContent = "Copy";
+        copyBtn.title = "Copy the itinerary as markdown";
+        copyBtn.addEventListener("click", function() {
+          var done = function(ok) {
+            copyBtn.textContent = ok ? "Copied!" : "Copy failed";
+            copyBtn.classList.toggle("copied", ok);
+            setTimeout(function() {
+              copyBtn.textContent = "Copy";
+              copyBtn.classList.remove("copied");
+            }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(markdown).then(
+              function() { done(true); },
+              function() { done(legacyCopy(markdown)); }
+            );
+          } else {
+            done(legacyCopy(markdown));
+          }
+        });
+        head.appendChild(copyBtn);
+        mdOut.appendChild(head);
+
         var body = document.createElement("div");
         body.className = "md-body";
         var rendered = null;
@@ -1035,14 +1095,17 @@
 
       if (!itin || typeof itin !== "object") return;
 
-      if (itin.intro) {
+      // Backend shape is {trip: {intro, days: [...]}}; tolerate flat too.
+      var trip = itin.trip || itin;
+
+      if (trip.intro) {
         var introP = document.createElement("p");
         introP.style.cssText = "font-size:0.95rem;color:#fff;opacity:0.9;margin-bottom:1rem;";
-        introP.textContent = itin.intro;
+        introP.textContent = trip.intro;
         out.appendChild(introP);
       }
 
-      var days = itin.days || [];
+      var days = trip.days || [];
       for (var i = 0; i < days.length; i++) {
         var day = days[i];
         var card = document.createElement("div");
@@ -1054,10 +1117,19 @@
         '</div>';
         var themeHtml = day.theme ? '<div class="day-theme">' + escapeHtml(day.theme) + '</div>' : "";
         var introHtml = day.intro ? '<div class="day-intro">' + escapeHtml(day.intro) + '</div>' : "";
-        var loadHtml = day.load ? '<div class="day-load">Load: ' + escapeHtml(String(day.load)) + '</div>' : "";
+        var loadHtml = day.load_minutes
+          ? '<div class="day-load">Stop time: ' + escapeHtml(String(day.load_minutes)) +
+            ' min · Travel: ' + escapeHtml(String(day.total_travel_minutes || 0)) + ' min</div>'
+          : "";
+
+        var routeHtml = day.directions_url
+          ? '<a class="route-link" target="_blank" rel="noopener" href="' + escapeHtml(day.directions_url) + '">' +
+            '&#128666; Open this day\'s route in Google Maps</a>'
+          : "";
 
         var stopsHtml = '<ul class="stop-list">';
         var stops = day.stops || [];
+        var legsBetween = day.legs_between || [];
         for (var s = 0; s < stops.length; s++) {
           var stop = stops[s];
           var kind = stop.kind || "stop";
@@ -1069,25 +1141,32 @@
           var advisoryHtml = stop.advisory_note
             ? ' <span class="badge advisory" title="' + escapeHtml(stop.advisory_note) + '">⏱ ' + escapeHtml(stop.advisory_note) + '</span>' : "";
           var addrHtml = stop.address ? '<div class="stop-addr">' + escapeHtml(stop.address) + '</div>' : "";
-          var tipsHtml = stop.tips ? '<div class="stop-tips">💡 ' + escapeHtml(stop.tips) + '</div>' : "";
+          var tipsHtml = stop.tip ? '<div class="stop-tips">💡 ' + escapeHtml(stop.tip) + '</div>' : "";
+
+          // Backend times are "HH:MM" in start/end; show a window.
+          var timeText = stop.end ? stop.start + "–" + stop.end : (stop.start || "");
 
           stopsHtml += '<li class="stop-item">' +
-            '<span class="stop-time">' + escapeHtml(stop.time || "") + '</span>' +
+            '<span class="stop-time">' + escapeHtml(timeText) + '</span>' +
             '<span class="stop-name">' + escapeHtml(stop.name || "") + '</span>' +
             ' <span class="badge ' + kindClass + '">' + escapeHtml(kind) + '</span>' +
             unverified + booking + advisoryHtml + addrHtml + tipsHtml;
 
-          if (stop.leg) {
-            var leg = stop.leg;
-            var legText = (leg.mode || "") + " · " + (leg.minutes != null ? leg.minutes + " min" : "");
-            stopsHtml += '<div class="leg-line">→ ' + escapeHtml(legText) + '</div>';
+          // Travel to the NEXT stop comes from day.legs_between[s] (backend shape).
+          var leg = legsBetween[s];
+          if (leg && stops[s + 1]) {
+            var legText = (leg.mode || "") + " · " +
+              (leg.minutes != null ? leg.minutes + " min" : "");
+            stopsHtml += '<div class="leg-line">→ ' + escapeHtml(legText) +
+              ' to ' + escapeHtml(stops[s + 1].name || "") + '</div>';
           }
           stopsHtml += '</li>';
         }
         stopsHtml += '</ul>';
 
         var altHtml = "";
-        var alts = day.alternatives || [];
+        var alts = (day.alternatives || trip.alternatives && trip.alternatives.days &&
+                    trip.alternatives.days[day.day_index] && trip.alternatives.days[day.day_index].swaps) || [];
         if (alts.length > 0) {
           altHtml = '<div class="alternatives-section"><h4>Possible swaps</h4>';
           for (var a = 0; a < alts.length; a++) {
@@ -1102,7 +1181,7 @@
           altHtml += '</div>';
         }
 
-        card.innerHTML = headerHtml + themeHtml + introHtml + loadHtml + stopsHtml + altHtml;
+        card.innerHTML = headerHtml + themeHtml + introHtml + loadHtml + routeHtml + stopsHtml + altHtml;
         out.appendChild(card);
       }
     }

@@ -277,14 +277,14 @@ class TestHappyPath:
         assert run_status(ctx)["is_completed"] is True
         assert ctx["current_node"] is None
 
-        # Exactly 4 agent nodes ran (scout -> reasoner -> alternatives ->
-        # compiler); the tools they own run INSIDE their turns and appear as
-        # separate tool rows in the sink, not as agent rows.
-        assert len(rows) == 4
+        # Exactly 3 agent nodes ran (scout -> reasoner -> compiler):
+        # Alternatives is consult-only and a clean PASS never consults it.
+        # The tools they own run INSIDE their turns and appear as separate
+        # tool rows in the sink, not as agent rows.
+        assert len(rows) == 3
         assert [r["node_name"] for r in rows] == [
             "scout",
             "reasoner",
-            "alternatives",
             "compiler",
         ]
         # Tool rows from the owned tools are in the sink with parent linkage.
@@ -353,7 +353,9 @@ class TestLoopBack:
         # draft->review->re-draft loop is internal to run_reasoner (unit-tested
         # in test_planner_agents), not a graph-level re-entry.
         assert node_seq.count("reasoner") == 1
-        assert node_seq.count("alternatives") == 1
+        # Alternatives is consult-only: a run without consult_alternatives
+        # skips it entirely.
+        assert node_seq.count("alternatives") == 0
         assert node_seq.count("compiler") == 1
         assert call_count["n"] == 1
         # ISSUES with empty re_research/consult flags routes forward, and the
@@ -396,8 +398,8 @@ class TestBound:
         assert ctx["current_node"] is None
         assert run_status(ctx)["is_completed"] is True
         assert node_seq.count("reasoner") == 1
-        # Alternatives + compiler still ran.
-        assert "alternatives" in node_seq
+        # Compiler still ran; Alternatives (consult-only) did not.
+        assert "alternatives" not in node_seq
         assert "compiler" in node_seq
 
 
@@ -456,9 +458,10 @@ class TestFailedNode:
 
         node_seq = [r["node_name"] for r in rows]
 
-        # Reasoner failed but routed forward to alternatives.
+        # Reasoner failed but still routed forward (to compiler; a failed
+        # node carries no consult flag, and Alternatives is consult-only).
         assert "reasoner" in node_seq
-        assert "alternatives" in node_seq
+        assert "compiler" in node_seq
         assert ctx["current_node"] is None
 
 

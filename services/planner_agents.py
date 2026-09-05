@@ -29,6 +29,7 @@ compute travel times or hours themselves.
 
 import os
 import re
+import urllib.parse
 from typing import Any, Callable
 
 from services.openrouter_service import (
@@ -1292,6 +1293,32 @@ def _build_compiler_prompt(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _directions_url(day_stops: list[dict]) -> str:
+    """Google Maps directions URL following a day's stops in order.
+
+    Uses the Maps URLs api=1 form: origin, destination, and the middle stops
+    as waypoints (coordinates, pipe-separated). Only stops with coordinates
+    participate; names would be ambiguous and cost geocode calls in Maps.
+    Returns "" when fewer than two stops have coordinates.
+    """
+    pts: list[str] = []
+    for stop in day_stops:
+        if not isinstance(stop, dict):
+            continue
+        lat, lng = stop.get("lat"), stop.get("lng")
+        if lat is None or lng is None:
+            continue
+        pts.append(f"{float(lat):.6f},{float(lng):.6f}")
+    if len(pts) < 2:
+        return ""
+    url = "https://www.google.com/maps/dir/?api=1"
+    url += "&origin=" + urllib.parse.quote(pts[0])
+    url += "&destination=" + urllib.parse.quote(pts[-1])
+    if len(pts) > 2:
+        url += "&waypoints=" + urllib.parse.quote("|".join(pts[1:-1]))
+    return url
+
+
 def _assemble_itinerary_json(
     ctx: dict, themes: list[str], intro: str
 ) -> dict:
@@ -1398,6 +1425,7 @@ def _assemble_itinerary_json(
             "legs_between": legs_out,
             "total_travel_minutes": total_travel,
             "load_minutes": load_minutes,
+            "directions_url": _directions_url(stops_out),
         })
 
     # Notes: repairs + errors summary
@@ -1465,6 +1493,10 @@ def render_itinerary_md(itinerary_json: dict) -> str:
 
         lines.append("")
         lines.append(f"## Day {di + 1} — {date_str} — {theme}")
+        dir_url = day.get("directions_url", "")
+        if dir_url:
+            lines.append("")
+            lines.append(f"[Open this day's route in Google Maps]({dir_url})")
         lines.append("")
 
         # Stops

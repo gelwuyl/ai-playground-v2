@@ -8,8 +8,9 @@
 #
 #   scout        (agent; owns tools: ingest, hours)
 #     |--> reasoner (agent; owns tools: logistics, scheduler)
-#            |--> alternatives (agent; advisor, no tools)
-#                   |--> compiler (agent; terminal, no tools)
+#            |--> alternatives (agent; advisor, CONSULT-ONLY — runs just
+#            |    when the Reasoner asks for swaps on a stuck day)
+#            |--> compiler (agent; terminal, no tools)
 #
 # The Reasoner runs a draft -> review -> re-draft loop INSIDE its own turn
 # (bounded by max_reasoner_rounds; at the cap it force-proceeds with issues
@@ -17,6 +18,11 @@
 # emits its OWN trace row (node_type "tool", node_name "{agent}.{tool}",
 # plus a "parent" field naming the owning agent) so the pipeline visualization
 # shows tools lighting up under their agent.
+#
+# Alternatives is CONSULT-ONLY: it never runs on its own — the Reasoner
+# pulls it in (max 1 consult) when a day is genuinely stuck and it wants
+# swap options. A clean PASS goes straight to the Compiler; an always-on
+# Alternatives pass after the Reasoner added no value (user call, 2026-09-05).
 #
 # Two bounded CONDITIONAL edges, both returning to the Reasoner so they can
 # never loop forever:
@@ -63,5 +69,5 @@ edges:
   - {from: reasoner, to: scout, when: re_research, counter: re_research_round, max_rounds: 1, back: reasoner}
   - {from: reasoner, to: alternatives, when: consult_alternatives, counter: consult_round, max_rounds: 1, back: reasoner}
   - {from: scout, to: reasoner}
-  - {from: reasoner, to: alternatives}
+  - {from: reasoner, to: compiler}
   - {from: alternatives, to: compiler}

@@ -138,7 +138,7 @@ def test_production_registry_runs_full_pipeline(stubbed_llm, stubbed_serp):
 
     assert planner_graph.run_status(ctx)["is_completed"] is True
     agent_seq = [r["node_name"] for r in rows]
-    assert agent_seq == ["scout", "reasoner", "alternatives", "compiler"]
+    assert agent_seq == ["scout", "reasoner", "compiler"]  # alternatives consult-only
 
     # The agents' owned tools actually ran (tool rows with dotted names).
     tool_names = {r["node_name"] for r in sink if r.get("node_type") == "tool"}
