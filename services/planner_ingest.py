@@ -28,6 +28,12 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+# Google now serves an interstitial HTML page (no redirect) to desktop
+# agents; a mobile UA still gets the classic 302 to the full maps URL.
+SHORT_LINK_USER_AGENT = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
 
 
 def _use_fixtures() -> bool:
@@ -111,6 +117,21 @@ def _infer_source(text: str) -> str:
     return "short_link" if text.startswith(("http://", "https://")) else "text"
 
 
+def _looks_like_prose(text: str) -> bool:
+    """Heuristic: a 'text' pin that is actually a sentence (user prose) rather
+    than a place name. Geocoding prose produces city-boundary junk pins, so
+    the ingest skips it with an explicit reason instead."""
+    t = text.strip()
+    if len(t) > 80:
+        return True
+    words = t.split()
+    if len(words) > 12:
+        return True
+    if ". " in t and not t.replace(".", "").isdigit():
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Short-link resolution
 # ---------------------------------------------------------------------------
@@ -135,7 +156,8 @@ def _parse_final_maps_url(url: str) -> dict | None:
     if place_match:
         name = urllib.parse.unquote_plus(place_match.group(1))
 
-    # Try maps.google.com/?q=<...>&ll=lat,lng or ?q=lat,lng
+    # Try maps.google.com/?q=<...>&ll=lat,lng or ?q=lat,lng (also the
+    # maps.search api=1 form: query=lat,lng)
     if lat is None or lng is None:
         ll_match = re.search(r"[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)", url)
         if ll_match:
@@ -144,7 +166,7 @@ def _parse_final_maps_url(url: str) -> dict | None:
 
     # If there's a ?q= parameter but no /place/ name, try to extract a name from q.
     if name is None:
-        q_match = re.search(r"[?&]q=([^&]+)", url)
+        q_match = re.search(r"[?&](?:q|query)=([^&]+)", url)
         if q_match:
             q_val = urllib.parse.unquote_plus(q_match.group(1))
             # If q looks like "lat,lng" don't use it as a name -- but do parse coords.
@@ -170,8 +192,8 @@ def _parse_final_maps_url(url: str) -> dict | None:
     if lat is not None or lng is not None:
         return {"name": None, "lat": lat, "lng": lng, "address": None,
                 "_coords_only": True}
-    # name only, no coords -- SerpApi fallback runs.
-    return None
+    # name only, no coords -- SerpApi fallback runs with the q= name.
+    return {"name": name, "lat": None, "lng": None, "address": None}
 
 
 def _geocode_fallback(final_url: str, city: str,
@@ -189,6 +211,9 @@ def _geocode_fallback(final_url: str, city: str,
     place_match = re.search(r"/place/([^/]+)", final_url)
     if place_match:
         query = urllib.parse.unquote_plus(place_match.group(1)).replace("+", " ")
+    # A q= name parsed from the URL (no coords) is itself a geocodable query.
+    if not query and coords and coords.get("name") and coords.get("lat") is None:
+        query = coords["name"]
     # If no slug, try a "lat,lng" query from the coords we already parsed.
     if not query and coords and coords.get("lat") is not None:
         query = f"{coords['lat']},{coords['lng']}"
@@ -214,16 +239,49 @@ def _geocode_fallback(final_url: str, city: str,
             except Exception:
                 pass
 
-    # Geocode failed or unavailable. If we have coords, return them with
-    # name=None so run_ingest persists the pin with a resolve_error.
-    if coords and (coords.get("lat") is not None or coords.get("lng") is not None):
+    # Geocode failed or unavailable (e.g. SerpApi 429). Free fallback:
+    # Nominatim reverse geocode gives a readable street/area name so the
+    # pin isn't persisted as a raw URL. Graceful: None on any failure.
+    if coords and coords.get("lat") is not None and coords.get("lng") is not None:
+        nominatim = _nominatim_reverse(coords["lat"], coords["lng"])
         return {
-            "name": None,
+            "name": (nominatim or {}).get("name"),
             "lat": coords.get("lat"),
             "lng": coords.get("lng"),
-            "address": None,
+            "address": (nominatim or {}).get("address"),
+            "name_source": "nominatim" if nominatim else None,
         }
     return None
+
+
+def _nominatim_reverse(lat: float, lng: float) -> dict | None:
+    """Reverse geocode via OSM Nominatim (free, no key; 1 req/s policy).
+
+    Returns {"name": short label, "address": full display name} or None.
+    Never raises. Used only as a fallback when SerpApi naming fails.
+    """
+    try:
+        import httpx
+        resp = httpx.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lng, "format": "json", "zoom": 18},
+            headers={"User-Agent": "MrBounceTripPlanner/1.0 (personal project)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        display = data.get("display_name")
+        if not display:
+            return None
+        addr = data.get("address") or {}
+        short = (addr.get("amenity") or addr.get("shop") or addr.get("road")
+                 or addr.get("suburb") or addr.get("city") or "")
+        return {
+            "name": f"{short} ({lat:.4f}, {lng:.4f})" if short else f"Pin @ {lat:.4f}, {lng:.4f}",
+            "address": display,
+        }
+    except Exception:
+        return None
 
 
 def resolve_short_link(url: str, city: str) -> dict | None:
@@ -259,7 +317,7 @@ def resolve_short_link(url: str, city: str) -> dict | None:
             url,
             follow_redirects=True,
             timeout=20,
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": SHORT_LINK_USER_AGENT},
         )
         # Prefer the final URL after redirects.
         candidate_url = str(r.url)
@@ -274,13 +332,25 @@ def resolve_short_link(url: str, city: str) -> dict | None:
         pass
 
     parsed = _parse_final_maps_url(final_url)
-    if parsed and not parsed.get("_coords_only"):
+    if parsed and not parsed.get("_coords_only") and parsed.get("lat") is not None:
         # Full resolution (name + coords) from the final URL.
         return parsed
-    # Coords-only or nothing usable: try the SerpApi geocode fallback.
+    # Name-only, coords-only, or nothing usable: try the SerpApi geocode
+    # fallback (it geocodes the q= name or the coords).
     # If the fallback also fails, return coords (name=None) so run_ingest
     # persists them with a resolve_error instead of silently using the URL.
-    return _geocode_fallback(final_url, city, parsed)
+    result = _geocode_fallback(final_url, city, parsed)
+    if result:
+        return result
+    # Nothing worked — log WHY (interstitial vs network error vs unparseable
+    # link shape); the function's contract is None on failure, never raise.
+    print(
+        f"resolve_short_link failed: url={url[:80]!r} "
+        f"final_url={final_url[:120]!r} "
+        f"http_fetch={'failed' if final_url == url else 'ok'} "
+        f"parse={'none' if parsed is None else 'coords_only'}"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +447,14 @@ def run_ingest(ctx: dict) -> dict:
         resolved_data: dict | None = None
         resolve_error: str | None = None
         try:
+            if (spec["source"] == "text" and _looks_like_prose(spec["raw_input"])):
+                failed.append(spec["raw_input"])
+                failed_details.append({
+                    "raw_input": spec["raw_input"],
+                    "source": spec["source"],
+                    "error": "looks like prose, not a place name — skipped; paste one place per line",
+                })
+                continue
             if spec["source"] == "short_link":
                 resolved_data = resolve_short_link(spec["raw_input"], city)
             else:

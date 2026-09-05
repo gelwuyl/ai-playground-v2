@@ -13,11 +13,56 @@ from services.planner_agents import (
     render_itinerary_md,
     _assemble_itinerary_json,
     run_scout,
+    run_reasoner,
     run_critic,
     run_alternatives,
     run_compiler,
     SCOUT_DEFAULTS,
 )
+
+
+def _inject_scout_tools(ctx: dict, monkeypatch=None) -> None:
+    """Give a scout ctx a runner-style ``_call_tool`` dispatcher (offline).
+
+    ``ingest`` is a no-op passthrough (pins are pre-seeded in these fixtures);
+    ``hours`` delegates to the real ``hours_tool`` against the mocked
+    SerpApi/LLM so the full research path is exercised. When a monkeypatch
+    fixture is supplied, the Overpass hours fallback is also disabled so the
+    no-SerpApi cases stay offline.
+    """
+    from services.planner_agents import hours_tool
+
+    if monkeypatch is not None:
+        import services.planner_free_geo as free_geo
+        monkeypatch.setattr(free_geo, "overpass_hours",
+                            lambda lat, lng, name: None)
+
+    def fake_tool(name, *args, **kwargs):
+        if name == "ingest":
+            return {"ingested": len(ctx.get("pins") or [])}
+        if name == "hours":
+            return hours_tool(ctx, kwargs.get("pin"))
+        raise KeyError(name)
+
+    ctx["_call_tool"] = fake_tool
+
+
+def _inject_reasoner_tools(ctx: dict) -> None:
+    """Give a reasoner ctx a runner-style ``_call_tool`` dispatcher (offline).
+
+    ``logistics`` is a no-op; ``scheduler`` is a pass-through that returns the
+    fixture's schedule unchanged so the LLM review drives the assertions.
+    """
+
+    def fake_tool(name, *args, **kwargs):
+        if name == "logistics":
+            ctx.setdefault("legs", [])
+            return {"legs_count": len(ctx["legs"])}
+        if name == "scheduler":
+            return ctx.get("schedule") or {}
+        raise KeyError(name)
+
+    ctx["_call_tool"] = fake_tool
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +196,47 @@ class TestParseRawHours:
         result = parse_raw_hours(raw)
         assert "0" not in result["days"]
         assert "1" in result["days"]
+
+    # -- OSM opening_hours syntax (Overpass source) ----------------------------
+    def test_osm_mo_su_selector(self):
+        """'Mo-Su 07:00-22:00' expands to all 7 days."""
+        result = parse_raw_hours("Mo-Su 07:00-22:00")
+        assert len(result["days"]) == 7
+        assert result["days"]["0"] == [{"open": "07:00", "close": "22:00"}]
+        assert result["days"]["6"] == [{"open": "07:00", "close": "22:00"}]
+
+    def test_osm_multi_selector_semicolons(self):
+        """'Mo-Fr 09:00-18:00; Sa 10:00-14:00' -> per-selector days, Sunday absent."""
+        result = parse_raw_hours("Mo-Fr 09:00-18:00; Sa 10:00-14:00")
+        assert result["days"]["0"] == [{"open": "09:00", "close": "18:00"}]
+        assert result["days"]["5"] == [{"open": "10:00", "close": "14:00"}]
+        assert "6" not in result["days"]
+
+    def test_osm_single_day_selector(self):
+        """'Mo 09:00-12:00' -> Monday only."""
+        result = parse_raw_hours("Mo 09:00-12:00")
+        assert result["days"] == {"0": [{"open": "09:00", "close": "12:00"}]}
+
+    def test_osm_week_wrap(self):
+        """'Fr-Mo 08:00-20:00' wraps the week: Fri, Sat, Sun, Mon."""
+        result = parse_raw_hours("Fr-Mo 08:00-20:00")
+        assert sorted(result["days"].keys()) == ["0", "4", "5", "6"]
+
+    def test_osm_24_7(self):
+        """'24/7' -> 00:00-23:59 every day."""
+        result = parse_raw_hours("24/7")
+        assert len(result["days"]) == 7
+        assert result["days"]["3"] == [{"open": "00:00", "close": "23:59"}]
+
+    def test_osm_bare_daily_window(self):
+        """'07:00-22:00' with no selector -> same window every day."""
+        result = parse_raw_hours("07:00-22:00")
+        assert len(result["days"]) == 7
+        assert result["days"]["5"] == [{"open": "07:00", "close": "22:00"}]
+
+    def test_osm_unparseable_returns_empty(self):
+        """Gibberish OSM string -> empty days, never raises."""
+        assert parse_raw_hours("gibberish-rule") == {"days": {}}
 
     def test_all_seven_days(self):
         """Full week of values, verify day-key mapping 0=Mon..6=Sun."""
@@ -590,11 +676,12 @@ class TestCriticDeterministic:
             "call_openrouter_json",
             lambda *a, **kw: {"verdict": "PASS"},
         )
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "ISSUES"
         # The issue should mention the meal
         assert any("meal" in i["message"].lower() for i in output["issues"])
-        assert ctx["critic"] == output
+        assert ctx["reasoner"] == output
 
     def test_llm_failure_defaults_pass_with_det_issues(self, monkeypatch):
         """LLM failure -> PASS with critic_error, unless det finds issues."""
@@ -644,10 +731,11 @@ class TestCriticDeterministic:
             raise ValueError("LLM unavailable")
 
         monkeypatch.setattr(planner_agents, "call_openrouter_json", raise_fn)
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "PASS"
-        assert "critic_error" in output
-        assert any("critic:" in e for e in ctx["errors"])
+        assert any("reasoner: LLM review failed" in e for e in ctx["errors"])
+        assert any("reasoner" in e for e in ctx["errors"])
 
     def test_pass_when_no_issues(self, monkeypatch):
         """Normal short day with a meal -> PASS."""
@@ -706,6 +794,7 @@ class TestCriticDeterministic:
             "call_openrouter_json",
             lambda *a, **kw: {"verdict": "PASS"},
         )
+        _inject_reasoner_tools(ctx)
         output = run_critic(ctx)
         assert output["verdict"] == "PASS"
         assert output["issues"] == []
@@ -773,6 +862,7 @@ class TestRunScout:
         original = sys.modules.get("services.planner_serp")
         sys.modules["services.planner_serp"] = MockSerp
         try:
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -854,6 +944,7 @@ class TestRunScout:
                 "current_node": "scout",
                 "errors": [],
             }
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:
@@ -868,9 +959,9 @@ class TestRunScout:
         r2 = ctx["research"][1]
         assert r2["dwell_minutes"] == SCOUT_DEFAULTS["dwell_minutes"]
         # Error logged
-        assert any("scout: LLM fallback" in e for e in ctx["errors"])
+        assert any("LLM fallback" in e for e in ctx["errors"])
 
-    def test_unresolved_pins_skipped(self):
+    def test_unresolved_pins_skipped(self, monkeypatch):
         """Unresolved pins are not researched."""
         from services import planner_agents
         import sys
@@ -916,6 +1007,7 @@ class TestRunScout:
                 "booking_required": False,
                 "tip": "Book ahead",
             }
+            _inject_scout_tools(ctx, monkeypatch)
             result = run_scout(ctx)
         finally:
             if original is not None:

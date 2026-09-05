@@ -1,23 +1,35 @@
 """Mr. Bounce — four LLM agent node functions for the trip-orchestrator crew.
 
 Each function takes the session-context dict ``ctx`` and mutates it in place,
-returning an output dict for the trace.  The four nodes are:
+returning an output dict for the trace.  The four agents own their tools —
+tools are invoked inside an agent's turn (``ctx["_call_tool"]``), NOT as
+standalone pipeline steps:
 
-  * ``run_scout``        — fan out per pin: SerpApi geocode + hours, one LLM call
-                          for category/dwell/booking/tip.
-  * ``run_critic``       — audit the schedule for tightness, missing meals,
-                          out-of-hours stops, lopsided days.
-  * ``run_alternatives`` — 2-3 swaps per day with trade-off prose.
-  * ``run_compiler``     — assemble the final itinerary JSON + markdown.
+  * ``run_scout``        — owns the ingest + hours tools: resolves the user's
+                           pins (ingest), then researches each pin via SerpApi
+                           (hours) plus one LLM call per pin for
+                           category/dwell/booking/tip/meal_fit/best_time.
+  * ``run_reasoner``     — owns the logistics + scheduler tools; runs a
+                           draft -> review -> re-draft loop (<= 3 rounds),
+                           applying GRADED REMEDIATION directives
+                           deterministically and force-proceeding at the cap.
+  * ``run_alternatives`` — advisor (no tools): 2-3 swaps per day with honest
+                           trade-offs, read from the Scout research table.
+  * ``run_compiler``     — assembles the final itinerary JSON + markdown
+                           (no tools); passes scheduler advisory notes through
+                           verbatim into itinerary slots and the markdown.
 
-Structured data (hours, coords, ratings) NEVER comes from the LLM — only from
-SerpApi.  The LLM supplies ONLY category, dwell, booking, tip (Scout);
-judgment (Critic); trade-off prose (Alternatives); theme + intro (Compiler).
+Structured data (hours, coords, ratings, travel times) NEVER comes from the
+LLM — only from SerpApi / the deterministic scheduler via tools.  The LLM
+supplies ONLY category, dwell, booking, tip, meal_fit, best_time (Scout);
+judgment + directives (Reasoner); trade-off prose (Alternatives); theme +
+intro (Compiler).  Every deterministic guarantee is preserved: agents never
+compute travel times or hours themselves.
 """
 
 import os
 import re
-from typing import Any
+from typing import Any, Callable
 
 from services.openrouter_service import (
     OPENROUTER_MODEL,
@@ -30,7 +42,10 @@ from services.planner_types import parse_hhmm
 # MODEL OVERRIDES (repo pattern: shared OPENROUTER_MODEL, per-agent override)
 # ==============================================================================
 SCOUT_MODEL = os.environ.get("PLANNER_SCOUT_MODEL", OPENROUTER_MODEL)
-CRITIC_MODEL = os.environ.get("PLANNER_CRITIC_MODEL", OPENROUTER_MODEL)
+REASONER_MODEL = os.environ.get(
+    "PLANNER_REASONER_MODEL",
+    os.environ.get("PLANNER_CRITIC_MODEL", OPENROUTER_MODEL),  # legacy env name
+)
 ALTERNATIVES_MODEL = os.environ.get("PLANNER_ALTERNATIVES_MODEL", OPENROUTER_MODEL)
 COMPILER_MODEL = os.environ.get("PLANNER_COMPILER_MODEL", OPENROUTER_MODEL)
 
@@ -41,26 +56,70 @@ SCOUT_SYSTEM = (
     "You are Scout — a travel researcher who knows typical visit durations for "
     "attractions, restaurants, and landmarks worldwide. Given a place name, "
     "city, and address, return a short JSON object with the category, typical "
-    "dwell time in minutes, whether booking is required, and a one-line tip."
+    "dwell time in minutes, whether booking is required, a one-line tip, "
+    "which meal the place fits (when it is food), and the best time window to "
+    "visit based on typical crowding."
 )
 
-CRITIC_SYSTEM = (
-    "You are Critic — a skeptical itinerary auditor. You examine schedules "
-    "for unrealistic tightness, missing meals on long days, stops outside "
-    "opening hours, and lopsided or empty days. You are precise and concise."
+REASONER_SYSTEM = (
+    "You are Reasoner — a causal logistics auditor for a day-by-day trip plan. "
+    "You review a deterministic schedule in which every stop has real SerpApi "
+    "opening hours and real directions travel times. You never invent hours, "
+    "travel times, or dwell times — you reason causally about the numbers in "
+    "the schedule and research tables only.\n"
+    "\n"
+    "DO THE ARITHMETIC. For each stop compute arrival = previous stop end + leg "
+    "minutes and squeeze = closing - arrival. When a visit is tight but still "
+    "feasible, do NOT drop it — keep it, write the arithmetic into the issue "
+    "message (e.g. 'closes 17:30, arrive 16:40 — keep visit to 30 min'), and, "
+    "if a shorter stay would close the gap, emit a compress_dwell directive "
+    "(dwell_minutes floor 20). When the schedule keeps a tight visit, surface "
+    "an advisory note with the same arithmetic so the user sees it.\n"
+    "\n"
+    "GRADED REMEDIATION — apply the LEAST destructive remedy first:\n"
+    "  1. reorder — move_before / move_after / move_to_day (same or another "
+    "     day, only when opening hours allow).\n"
+    "  2. compress_dwell — shorten the stay (floor 20 min) and keep the visit.\n"
+    "  3. consult_alternatives=true — no reorder or compression fixes the day; "
+    "     ask the Alternatives advisor for a swap.\n"
+    "  4. drop — ONLY when no feasible repair exists (e.g. closed all trip "
+    "     days, or hours too short to ever fit). Dropping is a last resort, "
+    "     never the default for a tight-but-kept visit.\n"
+    "\n"
+    "MEAL LOGIC. A day spanning >= 6 h needs a meal. When a lunch-venue "
+    "category stop has meal_fit == 'lunch', prefer it as the anchored lunch; "
+    "sequence morning stops to arrive there at a sensible lunch time. Never "
+    "schedule a stop during its closed hours.\n"
+    "\n"
+    "INSUFFICIENT DATA. If a stop's hours are unverified or a leg is missing "
+    "and you cannot judge feasibility, list that pin's name in re_research; "
+    "the Scout will re-research it (bounded to one throw-back). If you cannot "
+    "reorder or compress to fix a day, set consult_alternatives to true."
 )
 
 ALTERNATIVES_SYSTEM = (
-    "You are Alternatives — a travel planner who proposes 2-3 swap options per "
-    "day, each with a concrete trade-off. You only use candidate names provided "
-    "to you and you state the trade-off in plain language."
+    "You are Alternatives — the Reasoner's options advisor. You read the "
+    "Scout research table for ALL pins (placed and unplaced) and propose 2-3 "
+    "swap options per day, each with a concrete, honest trade-off (travel "
+    "impact, timing, crowding, meal fit). You only use candidate names from "
+    "the user's own pins — never invented places. Trade-offs are stated in "
+    "plain language with the numbers you are given; you never invent travel "
+    "times or opening hours."
 )
 
 COMPILER_SYSTEM = (
     "You are Compiler — a travel editor who writes a short theme label "
     "(3-6 words) for each day and a 2-sentence trip intro. You do not invent "
-    "places, times, or logistics; you only label."
+    "places, times, or logistics; you only label. Advisory notes already "
+    "carried on the schedule's stops pass through verbatim."
 )
+
+# ==============================================================================
+# Constants
+# ==============================================================================
+DWELL_FLOOR_MIN = 20            # compress_dwell floor (never compress below 20 min)
+MEAL_THRESHOLD_MIN = 360        # days spanning >= 6h need a meal slot
+_MEAL_FITS = ("breakfast", "lunch", "dinner", "any")
 
 # ==============================================================================
 # Day-key map (SerpApi lowercase -> canonical "0".."6")
@@ -75,7 +134,12 @@ _DAY_KEYS = {
     "sunday": "6",
 }
 
-MEAL_THRESHOLD_MIN = 360  # days spanning >= 6h need a meal slot
+# OSM two-letter day selectors (Overpass opening_hours) -> Monday-based index.
+_OSM_DAY_IDX = {
+    "Mo": 0, "Tu": 1, "We": 2, "Th": 3, "Fr": 4, "Sa": 5, "Su": 6,
+}
+_OSM_DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday",
+                  "friday", "saturday", "sunday")
 
 
 # ==============================================================================
@@ -239,8 +303,47 @@ def parse_raw_hours(raw: dict | None) -> dict:
                 if value is not None:
                     merged[str(day).strip().lower()] = value
         raw = merged or None
+    if isinstance(raw, str):
+        # OSM opening_hours string (Overpass source): "Mo-Su 07:00-22:00",
+        # "Mo-Fr 09:00-18:00; Sa 10:00-14:00", "24/7", or a bare daily
+        # window "07:00-22:00". Expand into per-day entries.
+        raw = {"osm": raw}
     if not raw or not isinstance(raw, dict):
         return {"days": {}}
+
+    # OSM opening_hours syntax (Overpass source): "Mo-Su 07:00-22:00",
+    # "Mo-Fr 09:00-18:00; Sa 10:00-14:00", "24/7". Expand each selector
+    # into per-day entries so the day-loop below can parse them.
+    if not any(k in raw for k in _DAY_KEYS):
+        expanded: dict = {}
+        osm_str = str(next(iter(raw.values()))) if len(raw) == 1 else ""
+        for part in osm_str.split(";"):
+            part = part.strip()
+            m = re.match(
+                r"^(?:(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?)\s+(.*)$",
+                part, re.IGNORECASE,
+            )
+            if m:
+                start_i = _OSM_DAY_IDX[m.group(1).title()]
+                end_i = _OSM_DAY_IDX[m.group(2).title()] if m.group(2) else start_i
+                if end_i < start_i:
+                    end_i += 7  # wraps the week (e.g. Fr-Mo)
+                for i in range(start_i, end_i + 1):
+                    # Key by day NAME (the day-loop below looks up raw[day_name]).
+                    expanded[_OSM_DAY_NAMES[i % 7]] = m.group(3)
+            elif part.lower() in ("24/7", "24/7 opening"):
+                for day in _OSM_DAY_NAMES:
+                    expanded[day] = "Open 24 hours"
+            else:
+                # Bare time range "07:00-22:00" or "09:00-18:00": same window
+                # every day (OSM omits the selector when it applies daily).
+                if re.match(r"^\d{1,2}:\d{2}\s*-\s*", part):
+                    for day in _OSM_DAY_NAMES:
+                        expanded[day] = part
+        if expanded:
+            raw = expanded
+        else:
+            return {"days": {}}
 
     days: dict[str, list[dict]] = {}
     for day_name, day_idx in _DAY_KEYS.items():
@@ -290,13 +393,15 @@ def _clamp_dwell(minutes: Any) -> int:
 
 
 # ==============================================================================
-# run_scout — fan-out node
+# run_scout — agent node that OWNS the ingest + hours tools
 # ==============================================================================
 SCOUT_SCHEMA = {
     "category": str,
     "dwell_minutes": int,
     "booking_required": bool,
     "tip": str,
+    "meal_fit": str,   # "breakfast" | "lunch" | "dinner" | "any" | null (non-food)
+    "best_time": str,  # "HH:MM-HH:MM" best window to visit, or null
 }
 
 SCOUT_DEFAULTS = {
@@ -304,7 +409,31 @@ SCOUT_DEFAULTS = {
     "dwell_minutes": 90,
     "booking_required": False,
     "tip": "",
+    "meal_fit": None,
+    "best_time": None,
 }
+
+
+def _clean_meal_fit(value: Any) -> str | None:
+    """Normalize meal_fit to the contract vocabulary (None for non-food)."""
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    return v if v in _MEAL_FITS else None
+
+
+def _clean_best_time(value: Any) -> str | None:
+    """Normalize best_time to 'HH:MM-HH:MM'; None when malformed."""
+    if value is None:
+        return None
+    v = str(value).strip().replace("–", "-").replace("—", "-")
+    m = re.match(r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$", v)
+    if not m:
+        return None
+    a, b = parse_hhmm(m.group(1)), parse_hhmm(m.group(2))
+    if a is None or b is None or a >= b:
+        return None
+    return f"{_format_min(a)}-{_format_min(b)}"
 
 
 def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
@@ -317,27 +446,36 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
     name = pin.get("name", "Unknown")
     pin_id = pin.get("pin_id", "")
 
-    # --- SerpApi structured data ---
+    # --- SerpApi structured data (geocode falls back to Photon/Nominatim) ---
     geo = planner_serp.geocode_place(name, city)
     lat = None
     lng = None
     address = None
     place_id = None
+    geocode_source = None
 
     if geo:
         lat = geo.get("lat") or pin.get("lat")
         lng = geo.get("lng") or pin.get("lng")
         address = geo.get("address") or pin.get("address")
         place_id = geo.get("place_id")
+        geocode_source = geo.get("geocode_source") or ("serpapi" if geo.get("place_id") else None)
     else:
         lat = pin.get("lat")
         lng = pin.get("lng")
         address = pin.get("address")
 
-    # Hours
+    # Hours: SerpApi first; if that yields nothing, best-effort Overpass (OSM).
     raw_hours = None
+    hours_source = "serpapi"
     if place_id or name:
         raw_hours = planner_serp.place_hours(name, city, place_id)
+    if not raw_hours and lat is not None and lng is not None:
+        from services.planner_free_geo import overpass_hours
+        osm = overpass_hours(lat, lng, name)
+        if osm:
+            raw_hours = osm["hours"]
+            hours_source = "osm"
 
     opening_hours = parse_raw_hours(raw_hours)
     hours_verified = bool(opening_hours["days"])
@@ -357,20 +495,25 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
             else:
                 raw_hours_shape = "list[0]"
 
-    # --- LLM call for category, dwell, booking, tip ---
+    # --- LLM call for category, dwell, booking, tip, meal_fit, best_time ---
     user_prompt = (
         f"Place name: {name}\n"
         f"City: {city}\n"
         f"Address: {address or 'unknown'}\n"
         f"Category hint: {pin.get('category', 'unknown')}\n\n"
         "Return JSON with keys: category (string), dwell_minutes (integer), "
-        "booking_required (boolean), tip (string)."
+        "booking_required (boolean), tip (string), "
+        "meal_fit (null unless this is a food place; else one of "
+        "breakfast|lunch|dinner|any), "
+        "best_time (null, or 'HH:MM-HH:MM' the best window to visit)."
     )
 
     category = SCOUT_DEFAULTS["category"]
     dwell_minutes = SCOUT_DEFAULTS["dwell_minutes"]
     booking_required = SCOUT_DEFAULTS["booking_required"]
     tip = SCOUT_DEFAULTS["tip"]
+    meal_fit = SCOUT_DEFAULTS["meal_fit"]
+    best_time = SCOUT_DEFAULTS["best_time"]
     llm_error: str | None = None
 
     try:
@@ -387,6 +530,8 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
             booking_required = bool(data.get("booking_required", False))
             tip_val = data.get("tip")
             tip = str(tip_val) if tip_val else ""
+            meal_fit = _clean_meal_fit(data.get("meal_fit"))
+            best_time = _clean_best_time(data.get("best_time"))
     except (ValueError, Exception) as e:
         llm_error = str(e)
 
@@ -405,54 +550,109 @@ def _scout_one_pin(pin: dict, city: str) -> tuple[dict, str | None]:
         "lng": lng,
         "address": address,
         "rating": None,
+        "geocode_source": geocode_source,
         "opening_hours": opening_hours,
         "hours_verified": hours_verified,
+        "hours_source": hours_source,
         "hours_error": hours_error,
         "raw_hours_shape": raw_hours_shape,
         "category": category,
         "dwell_minutes": dwell_minutes,
         "booking_required": booking_required,
         "tip": tip,
+        "meal_fit": meal_fit,
+        "best_time": best_time,
     }
     return result, llm_error
 
 
+def _require_tool_caller(ctx: dict) -> Callable:
+    """Return the runner-injected tool dispatcher ``ctx["_call_tool"]``.
+
+    The runner injects ``_call_tool`` into any agent node that declares
+    ``tools`` in the graph; invoking an agent directly without it (outside the
+    runner) is a wiring error.
+    """
+    caller = ctx.get("_call_tool")
+    if caller is None or not callable(caller):
+        raise RuntimeError(
+            "agent node invoked outside the runner: ctx has no '_call_tool' "
+            "dispatcher (run through services.planner_graph.advance with a "
+            "tools dict wired in)"
+        )
+    return caller
+
+
+def hours_tool(ctx: dict, pin: dict | None = None) -> dict:
+    """Scout's hours tool: SerpApi geocode + hours + LLM judgment for one pin.
+
+    Emits its own trace row when invoked through the runner's ``_call_tool``.
+    Returns the PlaceResearch dict for the pin.
+    """
+    if pin is None:
+        raise ValueError("hours tool requires a pin")
+    city = ctx.get("destination", "")
+    result, llm_error = _scout_one_pin(pin, city)
+    if llm_error:
+        ctx.setdefault("errors", []).append(
+            f"scout.hours: LLM fallback used for {pin.get('name', 'unknown')}"
+        )
+    return result
+
+
+def _scout_fallback_result(pin: dict) -> dict:
+    """A minimal PlaceResearch dict for a pin that could not be researched."""
+    return {
+        "pin_id": pin.get("pin_id", ""),
+        "name": pin.get("name", "Unknown"),
+        "neighborhood": "",
+        "lat": pin.get("lat"),
+        "lng": pin.get("lng"),
+        "address": pin.get("address"),
+        "rating": None,
+        "geocode_source": None,
+        "opening_hours": {"days": {}},
+        "hours_verified": False,
+        "hours_source": None,
+        "category": SCOUT_DEFAULTS["category"],
+        "dwell_minutes": SCOUT_DEFAULTS["dwell_minutes"],
+        "booking_required": SCOUT_DEFAULTS["booking_required"],
+        "tip": SCOUT_DEFAULTS["tip"],
+        "meal_fit": SCOUT_DEFAULTS["meal_fit"],
+        "best_time": SCOUT_DEFAULTS["best_time"],
+    }
+
+
 def run_scout(ctx: dict) -> dict:
-    """Scout node: fan out per pin, merge SerpApi + LLM into PlaceResearch list."""
+    """Scout agent node: owns the ingest + hours tools.
+
+    Internally calls its ingest tool to resolve the user's pins from
+    ``ctx["payload"]`` into ``ctx["pins"]``, then researches every resolved pin
+    via its hours tool (SerpApi geocode + hours + LLM judgment).  Each tool
+    invocation emits its own trace row (node_type "tool", parent "scout").
+    """
+    errors = ctx.setdefault("errors", [])
+    call_tool = _require_tool_caller(ctx)
+
+    # Tool: ingest — parse + resolve + persist the pins (owned by Scout).
+    call_tool("ingest")
+
     city = ctx.get("destination", "")
     pins = ctx.get("pins", [])
     resolved_pins = [p for p in pins if p.get("resolved", False)]
 
     research: list[dict] = []
     hours_verified_count = 0
-    errors = ctx.setdefault("errors", [])
 
     for pin in resolved_pins:
         try:
-            result, llm_error = _scout_one_pin(pin, city)
+            result = call_tool("hours", pin=pin)
             research.append(result)
-            if result["hours_verified"]:
+            if result.get("hours_verified"):
                 hours_verified_count += 1
-            if llm_error:
-                errors.append(
-                    f"scout: LLM fallback used for {pin.get('name', 'unknown')}"
-                )
         except Exception as e:
             errors.append(f"scout: pin '{pin.get('name', 'unknown')}' failed: {e}")
-            research.append({
-                "pin_id": pin.get("pin_id", ""),
-                "name": pin.get("name", "Unknown"),
-                "neighborhood": "",
-                "lat": pin.get("lat"),
-                "lng": pin.get("lng"),
-                "rating": None,
-                "opening_hours": {"days": {}},
-                "hours_verified": False,
-                "category": SCOUT_DEFAULTS["category"],
-                "dwell_minutes": SCOUT_DEFAULTS["dwell_minutes"],
-                "booking_required": SCOUT_DEFAULTS["booking_required"],
-                "tip": SCOUT_DEFAULTS["tip"],
-            })
+            research.append(_scout_fallback_result(pin))
 
     ctx["research"] = research
     n = len(research)
@@ -463,6 +663,8 @@ def run_scout(ctx: dict) -> dict:
         "hours_diagnostics": [
             {
                 "name": r.get("name"),
+                "hours_source": r.get("hours_source"),
+                "geocode_source": r.get("geocode_source"),
                 "hours_error": r.get("hours_error"),
                 "raw_hours_shape": r.get("raw_hours_shape"),
             }
@@ -472,15 +674,18 @@ def run_scout(ctx: dict) -> dict:
 
 
 # ==============================================================================
-# run_critic — audit node (LLM + deterministic pre-check)
+# run_reasoner — causal logistics auditor (owns logistics + scheduler tools)
 # ==============================================================================
-CRITIC_SCHEMA = {
+REASONER_SCHEMA = {
     "verdict": str,
     "issues": list,
+    "directives": list,
+    "re_research": str,
+    "consult_alternatives": bool,
 }
 
 
-def _deterministic_critic_checks(ctx: dict) -> list[dict]:
+def _deterministic_reasoner_checks(ctx: dict) -> list[dict]:
     """Run deterministic checks on the schedule. Returns a list of issue dicts.
 
     Checks:
@@ -561,29 +766,30 @@ def _deterministic_critic_checks(ctx: dict) -> list[dict]:
     return issues
 
 
-def _build_critic_prompt(ctx: dict) -> str:
-    """Build a compact prompt for the Critic LLM."""
+def _build_reasoner_prompt(ctx: dict, applied_directives: list[dict]) -> str:
+    """Build a compact causal-audit prompt for the Reasoner LLM."""
     schedule = ctx.get("schedule", {})
     research = ctx.get("research", [])
-    lines: list[str] = []
-
-    lines.append(f"Destination: {ctx.get('destination', 'unknown')}")
-    lines.append(f"Start date: {ctx.get('start_date', 'unknown')}")
-    lines.append(f"Num days: {ctx.get('num_days', 0)}")
-    lines.append("")
-
-    lines.append("Researched places:")
+    lines: list[str] = [
+        f"Destination: {ctx.get('destination', 'unknown')}",
+        f"Start date: {ctx.get('start_date', 'unknown')}",
+        f"Num days: {ctx.get('num_days', 0)}",
+        "",
+        "Researched places:",
+    ]
     for r in research:
         if not isinstance(r, dict):
             continue
         lines.append(
             f"  - {r.get('name', '?')}: category={r.get('category', '?')}, "
             f"dwell={r.get('dwell_minutes', '?')}min, "
-            f"hours_verified={r.get('hours_verified', False)}"
+            f"hours_verified={r.get('hours_verified', False)}, "
+            f"meal_fit={r.get('meal_fit', '?')}, "
+            f"best_time={r.get('best_time', '?')}"
         )
-    lines.append("")
 
-    lines.append("Schedule:")
+    lines.append("")
+    lines.append("Schedule (all times are real SerpApi hours / directions):")
     for day in schedule.get("days", []):
         if not isinstance(day, dict):
             continue
@@ -595,7 +801,11 @@ def _build_critic_prompt(ctx: dict) -> str:
             e = _format_min(slot.get("end_min", 0))
             kind = slot.get("kind", "stop")
             name = slot.get("name", "?")
-            lines.append(f"    {s}-{e} [{kind}] {name}")
+            line = f"    {s}-{e} [{kind}] {name}"
+            note = slot.get("advisory_note")
+            if note:
+                line += f"   (advisory: {note})"
+            lines.append(line)
         for leg in day.get("legs", []):
             if not isinstance(leg, dict):
                 continue
@@ -608,69 +818,318 @@ def _build_critic_prompt(ctx: dict) -> str:
             f"    total_scheduled: {day.get('total_scheduled_minutes', 0)}min"
         )
 
+    if applied_directives:
+        lines.append("")
+        lines.append("Directives ALREADY applied by earlier drafts — do not repeat:")
+        for d in applied_directives:
+            lines.append(f"  - {d}")
+
+    alts = ctx.get("alternatives")
+    if isinstance(alts, dict) and alts.get("days"):
+        lines.append("")
+        lines.append("Alternatives advisor suggestions (from a prior consult):")
+        for day in alts.get("days", []):
+            if not isinstance(day, dict):
+                continue
+            for swap in day.get("swaps", []):
+                if isinstance(swap, dict):
+                    lines.append(
+                        f"  - Day {day.get('day_index', '?')}: swap "
+                        f"{swap.get('remove_name', '?')} for "
+                        f"{swap.get('add_name', '?')} — {swap.get('trade_off', '')}"
+                    )
+
     lines.append("")
     lines.append(
-        "Check for: (a) unrealistic tightness — back-to-back stops without "
-        "slack, long legs after late stops; (b) missing meals on days spanning "
-        ">= 6 hours; (c) stops outside opening hours or on closed days; "
-        "(d) empty or lopsided days. "
-        'Return JSON: {"verdict": "PASS"} or '
-        '{"verdict": "ISSUES", "issues": [{"day_index": int, '
-        '"severity": "high|medium|low", "message": str}]}'
+        "Audit the schedule CAUSALLY using only the numbers above — never invent "
+        "hours, travel times, or dwell times. GRADED REMEDIATION, least "
+        "destructive first: (1) reorder (move_before/move_after/move_to_day), "
+        "(2) compress_dwell (dwell_minutes floor 20), "
+        "(3) consult_alternatives=true, (4) drop — only when no feasible repair "
+        "exists. A tight-but-kept visit is an advisory note, never a drop. "
+        'Return JSON: {"verdict": "PASS" or "ISSUES", "issues": '
+        '[{"day_index": int, "severity": "high|medium|low", "message": str}], '
+        '"directives": [{"action": '
+        '"move_before|move_after|move_to_day|compress_dwell|drop", '
+        '"stop": str, "reference": str|null, "day": int|null, '
+        '"dwell_minutes": int|null, "reason": str}], '
+        '"re_research": str (comma-separated pin names; empty string if none), '
+        '"consult_alternatives": bool}'
     )
-
     return "\n".join(lines)
 
 
-def run_critic(ctx: dict) -> dict:
-    """Critic node: LLM audit + deterministic pre-check (belt and braces)."""
+def _clean_reasoner_issues(value: Any) -> list[dict]:
+    """Normalize LLM issues to the {day_index, severity, message} contract."""
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            day_index = int(item.get("day_index", 0))
+        except (TypeError, ValueError):
+            day_index = 0
+        severity = str(item.get("severity", "low")).strip().lower()
+        if severity not in ("high", "medium", "low"):
+            severity = "low"
+        message = str(item.get("message", "") or "").strip()
+        if message:
+            cleaned.append({
+                "day_index": day_index,
+                "severity": severity,
+                "message": message,
+            })
+    return cleaned
+
+
+def _clean_directive(value: Any) -> dict | None:
+    """Normalize one LLM directive to the scheduler's contract.
+
+    Returns None for anything unusable (unknown action or missing stop) so it
+    can be skipped rather than letting a malformed directive poison the draft.
+    """
+    if not isinstance(value, dict):
+        return None
+    action = str(value.get("action", "") or "").strip()
+    stop = str(value.get("stop", "") or "").strip()
+    if action not in ("move_before", "move_after", "move_to_day",
+                      "compress_dwell", "drop"):
+        return None
+    if not stop:
+        return None
+
+    reference_raw = value.get("reference")
+    reference = str(reference_raw).strip() if reference_raw else None
+
+    day_raw = value.get("day")
+    day: int | None = None
+    if isinstance(day_raw, bool):
+        day = None
+    elif isinstance(day_raw, int):
+        day = day_raw
+    elif isinstance(day_raw, str) and day_raw.strip().lstrip("-").isdigit():
+        day = int(day_raw.strip())
+
+    dwell_raw = value.get("dwell_minutes")
+    dwell: int | None = None
+    if isinstance(dwell_raw, bool):
+        dwell = None
+    elif isinstance(dwell_raw, int):
+        dwell = dwell_raw
+    elif isinstance(dwell_raw, str) and dwell_raw.strip().isdigit():
+        dwell = int(dwell_raw.strip())
+
+    reason = str(value.get("reason", "") or "").strip() or None
+
+    return {
+        "action": action,
+        "stop": stop,
+        "reference": reference,
+        "day": day,
+        "dwell_minutes": dwell,
+        "reason": reason,
+    }
+
+
+def _alternatives_swap_directives(ctx: dict) -> list[dict]:
+    """Translate a prior consult's Alternatives swaps into drop directives.
+
+    A swap says \"remove X, add Y from the unplaced pool\".  Deterministically
+    turning it into a ``drop`` on X frees X's slot so the scheduler cascade can
+    place Y; the reason for the drop names the swap so the trace stays honest.
+    Applied once per run (guarded by ``_swap_directives_applied``).
+    """
+    if ctx.get("_swap_directives_applied"):
+        return []
+    alts = ctx.get("alternatives")
+    if not isinstance(alts, dict):
+        return []
+    out: list[dict] = []
+    for day in alts.get("days", []):
+        if not isinstance(day, dict):
+            continue
+        for swap in day.get("swaps", []):
+            if not isinstance(swap, dict):
+                continue
+            remove = (swap.get("remove_name") or "").strip()
+            add = (swap.get("add_name") or "").strip()
+            trade = (swap.get("trade_off") or "").strip()
+            if not remove:
+                continue
+            reason = "consult alternatives"
+            if add:
+                reason = f"consult: swap {remove} for {add}"
+            if trade:
+                reason += f" ({trade})"
+            out.append({"action": "drop", "stop": remove, "reason": reason})
+    return out
+
+
+def _review_schedule(ctx: dict, applied_directives: list[dict]) -> dict:
+    """One Reasoner LLM review of the current schedule. Never raises."""
     errors = ctx.setdefault("errors", [])
-
-    # Deterministic pre-check
-    det_issues = _deterministic_critic_checks(ctx)
-
-    # LLM audit
-    output: dict[str, Any]
     try:
         data = call_openrouter_json(
-            _build_critic_prompt(ctx),
-            CRITIC_SYSTEM,
-            schema=CRITIC_SCHEMA,
-            model=CRITIC_MODEL,
+            _build_reasoner_prompt(ctx, applied_directives),
+            REASONER_SYSTEM,
+            schema=REASONER_SCHEMA,
+            model=REASONER_MODEL,
         )
-        if isinstance(data, dict) and data.get("verdict") in ("PASS", "ISSUES"):
-            output = data
-            if data.get("verdict") == "ISSUES":
-                llm_issues = data.get("issues", [])
-                if not isinstance(llm_issues, list):
-                    llm_issues = []
-                output["issues"] = det_issues + [
-                    i for i in llm_issues if isinstance(i, dict)
-                ]
-            else:
-                # LLM says PASS but deterministic found issues
-                output["issues"] = det_issues
-                if det_issues:
-                    output["verdict"] = "ISSUES"
-        else:
-            output = {"verdict": "PASS", "issues": det_issues}
-            if det_issues:
-                output["verdict"] = "ISSUES"
+        if isinstance(data, dict):
+            return data
+        raise ValueError("reasoner: LLM returned non-dict JSON")
     except (ValueError, Exception) as e:
-        output = {
+        # Default to a safe PASS shape; deterministic checks still apply.
+        errors.append(f"reasoner: LLM review failed, using defaults — {e}")
+        return {
             "verdict": "PASS",
-            "critic_error": str(e),
-            "issues": det_issues,
+            "issues": [],
+            "directives": [],
+            "re_research": "",
+            "consult_alternatives": False,
         }
-        if det_issues:
-            output["verdict"] = "ISSUES"
+
+
+def run_reasoner(ctx: dict) -> dict:
+    """Reasoner agent node: owns the logistics + scheduler tools.
+
+    Runs a draft -> review -> re-draft loop bounded by ``max_reasoner_rounds``
+    (graph key; injected into ctx as ``_max_reasoner_rounds``).  Each draft
+    calls the scheduler tool with the directives accumulated so far; each
+    review asks the LLM for directives (GRADED REMEDIATION, least destructive
+    first).  At the cap it force-proceeds with issues surfaced — never loops
+    forever.  The final output dict drives the runner's conditional edges:
+    ``re_research`` (non-empty string) throws back to Scout (max 1),
+    ``consult_alternatives`` (bool) throws back via Alternatives (max 1).
+    """
+    errors = ctx.setdefault("errors", [])
+    call_tool = _require_tool_caller(ctx)
+
+    max_rounds = int(ctx.get("_max_reasoner_rounds", 3) or 3)
+    if max_rounds < 1:
+        max_rounds = 1
+    start_round = int(ctx.get("reasoner_round", 0) or 0)
+    start_round = min(start_round, max_rounds - 1)
+
+    # Tool: logistics once per turn — the travel matrix does not change
+    # between drafts (drop directives leave the unused legs in place but the
+    # scheduler only consumes legs between scheduled stops). Long trips
+    # batch: the tool fetches a limited number of legs per call; if work
+    # remains, return a "working" result so the runner re-enters this node
+    # (bounded by the re-research budget) instead of drafting on a partial
+    # travel matrix.
+    logistics_out = call_tool("logistics")
+    pending = int((logistics_out or {}).get("pending_legs") or 0)
+    if pending > 0:
+        working = {
+            "verdict": "ISSUES",
+            "issues": [{"day_index": 0, "severity": "low",
+                        "message": f"Collecting travel times: {pending} leg(s) remaining."}],
+            "directives": [],
+            "re_research": "",
+            "consult_alternatives": False,
+            "_logistics_pending": pending,
+        }
+        ctx["reasoner"] = working
+        return working
+
+    # If a prior consult already suggested swaps, honour them on the first
+    # draft (drop frees a slot; the cascade re-places the added pin).
+    directives_so_far: list[dict] = _alternatives_swap_directives(ctx)
+    if directives_so_far:
+        ctx["_swap_directives_applied"] = True
+
+    consult_done = bool(ctx.get("consult_round", 0))  # runner-level consult budget
+
+    final = {
+        "verdict": "PASS",
+        "issues": [],
+        "directives": [],
+        "re_research": "",
+        "consult_alternatives": False,
+    }
+
+    round_no = start_round
+    while round_no < max_rounds:
+        # --- Draft: run the deterministic scheduler with accumulated directives.
+        draft = call_tool("scheduler", directives=list(directives_so_far))
+        if isinstance(draft, dict) and draft:
+            ctx["schedule"] = draft
+        round_no += 1
+        ctx["reasoner_round"] = round_no  # a draft was consumed
+
+        # Deterministic pre-check (belt and braces, never from the LLM).
+        det_issues = _deterministic_reasoner_checks(ctx)
+
+        # --- Review: LLM causal audit of the current draft.
+        review = _review_schedule(ctx, list(directives_so_far))
+        llm_issues = _clean_reasoner_issues(review.get("issues"))
+
+        merged: list[dict] = []
+        seen: set[tuple] = set()
+        for issue in det_issues + llm_issues:
+            key = (
+                issue.get("day_index"),
+                issue.get("severity"),
+                issue.get("message"),
+            )
+            if key not in seen:
+                seen.add(key)
+                merged.append(issue)
+        issues = merged
+
+        re_research = str(review.get("re_research", "") or "").strip()
+        consult = bool(review.get("consult_alternatives", False))
+
+        for directive in review.get("directives", []):
+            clean = _clean_directive(directive)
+            if clean is not None:
+                directives_so_far.append(clean)
+
+        final = {
+            "verdict": "ISSUES" if issues else "PASS",
+            "issues": issues,
+            "directives": list(directives_so_far),
+            "re_research": re_research,
+            "consult_alternatives": consult,
+        }
+
+        # --- Termination: stop refining when there is nothing left to fix.
+        if not issues and not re_research and not consult:
+            break
+        if re_research:
+            # Ask Scout to re-research; the runner throws back (max 1).
+            break
+        if consult and consult_done:
+            errors.append(
+                "reasoner: consult budget already consumed (max 1); "
+                "force-proceeding with the last draft"
+            )
+            break
+        if not directives_so_far:
+            # Issues remain but no actionable remedy -> proceed, issues surfaced.
+            break
+    else:
         errors.append(
-            "critic: LLM failed, defaulting PASS — do not silently hide; "
-            "the trace shows it"
+            f"reasoner: max rounds reached ({max_rounds}); proceeding with issues"
         )
 
-    ctx["critic"] = output
-    return output
+    ctx["reasoner"] = final
+    return final
+
+
+# Legacy aliases — Critic was renamed Reasoner; kept so stale imports
+# (e.g. api/planner.py before its registry update) keep working.
+CRITIC_SYSTEM = REASONER_SYSTEM
+CRITIC_MODEL = REASONER_MODEL
+CRITIC_SCHEMA = REASONER_SCHEMA
+
+
+def run_critic(ctx: dict) -> dict:
+    """Legacy alias for ``run_reasoner`` (Critic was renamed Reasoner)."""
+    return run_reasoner(ctx)
 
 
 # ==============================================================================
@@ -901,6 +1360,8 @@ def _assemble_itinerary_json(
                 stop_out["hours_flag"] = "[unverified]"
             else:
                 stop_out["hours_flag"] = ""
+            # Advisory notes from the scheduler pass through verbatim.
+            stop_out["advisory_note"] = str(slot.get("advisory_note", "") or "")
 
             stops_out.append(stop_out)
 
@@ -1031,6 +1492,17 @@ def render_itinerary_md(itinerary_json: dict) -> str:
                     f"| {start}–{end} | {name} | {kind} | {tip} | "
                     f"{booking} | {hours_flag} |"
                 )
+            lines.append("")
+
+        # Advisory notes (verbatim from the scheduler) — one bullet per note.
+        advisory_note_lines = [
+            f"- {stop.get('name', '?')}: {stop['advisory_note']}"
+            for stop in stops
+            if isinstance(stop, dict) and stop.get("advisory_note")
+        ]
+        if advisory_note_lines:
+            lines.append("**Advisory notes:**")
+            lines.extend(advisory_note_lines)
             lines.append("")
 
         # Legs

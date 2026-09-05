@@ -149,6 +149,26 @@ FIXTURE_PLACES = {
             "sunday": "10 AM–12 PM, 2–4:30 PM",
         },
     },
+    # Closing-squeeze regression pair: Civil Defence Heritage Gallery closes at
+    # 17:30 daily, so a late arrival after a long visit at its companion
+    # (Buddha Tooth Relic Temple) cannot fit before close — the graded-
+    # remediation scenario (reorder-then-compress) is exercisable here.
+    "Civil Defence Heritage Gallery": {
+        "name": "Civil Defence Heritage Gallery",
+        "lat": 1.2906,
+        "lng": 103.8488,
+        "address": "62 Hill Street, City Hall, Singapore 179367",
+        "place_id": "0x31da1b9c5e000009:0xc51b9abcdef01234",
+        "raw_hours": {
+            "monday": "10 AM–5:30 PM",
+            "tuesday": "10 AM–5:30 PM",
+            "wednesday": "10 AM–5:30 PM",
+            "thursday": "10 AM–5:30 PM",
+            "friday": "10 AM–5:30 PM",
+            "saturday": "10 AM–5:30 PM",
+            "sunday": "10 AM–5:30 PM",
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -227,6 +247,9 @@ FIXTURE_DIRECTIONS = {
     "buddha tooth relic temple|maxwell food centre:walking": {"distance_km": 0.2, "minutes": 2.7},
     "buddha tooth relic temple|maxwell food centre:driving": {"distance_km": 0.2, "minutes": 0.5},
     "buddha tooth relic temple|maxwell food centre:transit": {"distance_km": 0.2, "minutes": 7.8},
+    "buddha tooth relic temple|civil defence heritage gallery:walking": {"distance_km": 1.3, "minutes": 17.3},
+    "buddha tooth relic temple|civil defence heritage gallery:driving": {"distance_km": 1.3, "minutes": 3.5},
+    "buddha tooth relic temple|civil defence heritage gallery:transit": {"distance_km": 1.3, "minutes": 10.4},
     "buddha tooth relic temple|singapore botanic gardens:walking": {"distance_km": 6.7, "minutes": 89.3},
     "buddha tooth relic temple|singapore botanic gardens:driving": {"distance_km": 6.7, "minutes": 18.3},
     "buddha tooth relic temple|singapore botanic gardens:transit": {"distance_km": 6.7, "minutes": 33.8},

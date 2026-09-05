@@ -19,6 +19,18 @@ from services.planner_ingest import (
 )
 
 
+def _block_all_geocoders(monkeypatch):
+    """Make every geocode path fail offline: no planner_serp module, and the
+    free geocoders (Photon/Nominatim inside geocode_place) return None."""
+    monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+    monkeypatch.setattr(
+        "services.planner_free_geo.photon_geocode", lambda name, city: None
+    )
+    monkeypatch.setattr(
+        "services.planner_free_geo.nominatim_geocode", lambda name, city: None
+    )
+
+
 # ---------------------------------------------------------------------------
 # parse_pin_inputs
 # ---------------------------------------------------------------------------
@@ -152,12 +164,14 @@ class TestParseFinalMapsUrl:
         assert result["lng"] == pytest.approx(151.2153)
         assert result["name"] == "Sydney Opera House"
 
-    def test_name_only_no_coords_returns_none(self):
-        """A URL with a /place/ name but no @lat,lng -> None so the
-        SerpApi geocode fallback can run."""
+    def test_name_only_no_coords_returns_name_for_fallback(self):
+        """A URL with a /place/ name but no @lat,lng -> the name dict so the
+        SerpApi geocode fallback can geocode that name (previously returned
+        None and the name was thrown away — the road-trip ingest bug)."""
         url = "https://www.google.com/maps/place/Gardens+by+the+Bay"
         result = _parse_final_maps_url(url)
-        assert result is None
+        assert result == {"name": "Gardens by the Bay", "lat": None,
+                          "lng": None, "address": None}
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +221,15 @@ class TestGeocodeFallback:
         assert result["lat"] == pytest.approx(1.2816)
 
     def test_geocode_fails_returns_coords_with_none_name(self, monkeypatch):
-        """When geocode fails and coords are available, return coords with name=None."""
-        # No planner_serp in sys.modules -> import fails -> geocode skipped.
-        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+        """Geocode fails + coords available -> coords kept, name from the
+        Nominatim reverse fallback (or None when that also fails)."""
+        # No planner_serp in sys.modules -> import fails -> geocode skipped;
+        # free geocoders patched to None so no live Photon/Nominatim calls.
+        _block_all_geocoders(monkeypatch)
+        # Nominatim unreachable in tests -> name stays None, coords survive.
+        monkeypatch.setattr(
+            "services.planner_ingest._nominatim_reverse", lambda lat, lng: None
+        )
 
         coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
                   "_coords_only": True}
@@ -222,6 +242,25 @@ class TestGeocodeFallback:
         assert result["name"] is None
         assert result["lat"] == pytest.approx(1.2816)
         assert result["lng"] == pytest.approx(103.8636)
+
+    def test_geocode_fails_nominatim_names_the_pin(self, monkeypatch):
+        """Geocode fails -> Nominatim reverse supplies a readable name."""
+        _block_all_geocoders(monkeypatch)
+        monkeypatch.setattr(
+            "services.planner_ingest._nominatim_reverse",
+            lambda lat, lng: {"name": "Jalan Besar (1.2816, 103.8636)",
+                              "address": "Jalan Besar, Singapore"},
+        )
+        coords = {"name": None, "lat": 1.2816, "lng": 103.8636, "address": None,
+                  "_coords_only": True}
+        result = _geocode_fallback(
+            "https://www.google.com/maps/@1.2816,103.8636,15z",
+            "Singapore",
+            coords=coords,
+        )
+        assert result is not None
+        assert "Jalan Besar" in result["name"]
+        assert result["name_source"] == "nominatim"
 
     def test_geocode_fails_no_coords_returns_none(self, monkeypatch):
         """When geocode fails and no coords, return None."""
@@ -491,7 +530,7 @@ class TestResolveTextPin:
 
     def test_no_planner_serp_module(self, monkeypatch):
         """If planner_serp is not importable, return None gracefully."""
-        monkeypatch.delitem(sys.modules, "services.planner_serp", raising=False)
+        _block_all_geocoders(monkeypatch)
         # Also make the import fail by injecting an import blocker.
         original_import = __import__
 

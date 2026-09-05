@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mr. Bounce — Trip Orchestrator</title>
+  <title>Mr. Bounce — Trip Orchestrator (CrewAI)</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/story.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <style>
     /* ---- Page-local styles (mirrors research.html pattern) ---- */
     .container { max-width: 960px; }
@@ -50,7 +52,126 @@
     .intake-form .row { display: flex; gap: 1rem; }
     .intake-form .row > .field { flex: 1; }
 
-    /* ---- Animated 7-node graph ---- */
+    /* ---- Map picker (pins textarea on top, map pane below) ---- */
+    .map-picker {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+    }
+    .map-picker > * { min-width: 0; }
+    .map-picker textarea { height: 160px; }
+
+    /* All Leaflet-facing overrides are scoped under .map-pane so the CDN
+       stylesheet never clobbers the rest of the card. */
+    .map-pane {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .map-pane .map-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #333;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid #e4e7eb;
+      background: #f9fafb;
+      flex: none;
+    }
+    .map-pane .map-search {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #e4e7eb;
+      background: #f9fafb;
+      flex: none;
+      position: relative;
+    }
+    .map-pane .map-search input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      color: #111;
+    }
+    .map-pane .map-search button {
+      flex: none;
+      padding: 0.45rem 0.9rem;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .map-pane .map-search button:hover { background: #1d4ed8; }
+    .map-pane .map-search button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .map-pane .map-search-results {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0.75rem;
+      right: 0.75rem;
+      z-index: 1000;
+      background: #fff;
+      border: 1px solid #e4e7eb;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .map-pane .map-search-row {
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+    }
+    .map-pane .map-search-row:hover { background: #eef2ff; }
+    .map-pane .map-search-name { font-size: 0.9rem; font-weight: 600; color: #1f2933; }
+    .map-pane .map-search-addr { font-size: 0.8rem; color: #6b7280; margin-top: 0.1rem; }
+    .map-pane .map-search-message { cursor: default; font-size: 0.85rem; color: #52606d; }
+    .map-pane #map {
+      height: 420px;
+      flex: 0 0 auto;
+      z-index: 0;
+    }
+    .map-pane .leaflet-container {
+      font-family: inherit;
+      border-radius: 0;
+    }
+    .map-pane .map-chip {
+      flex: none;
+      font-size: 0.78rem;
+      color: #52606d;
+      background: #f9fafb;
+      border-top: 1px solid #e4e7eb;
+      padding: 0.35rem 0.75rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-height: 1.4em;
+    }
+    @media (max-width: 768px) {
+      .map-picker { grid-template-columns: 1fr; }
+      .map-picker textarea { height: auto; }
+      .map-pane #map { height: 300px; }
+    }
+
+    /* ---- Animated 4-agent graph ---- */
+    .graph-wrap.idle-state .graph-legend { opacity: 0.45; }
+    .graph-wrap.idle-state #graph-svg { opacity: 0.75; }
+    .graph-wrap.idle-state .node-circle {
+      animation: idle-breathe 3s ease-in-out infinite;
+    }
+    @keyframes idle-breathe {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 0.95; }
+    }
     .graph-wrap {
       background: rgba(255,255,255,0.92);
       border-radius: 16px;
@@ -94,25 +215,25 @@
     }
 
     /* Node state transitions */
-    .node-rect, .node-circle {
+    .node-circle {
       transition: fill 0.4s ease, stroke 0.4s ease, stroke-width 0.4s ease, filter 0.4s ease, opacity 0.4s ease;
     }
-    .node-rect.idle, .node-circle.idle {
+    .node-circle.idle {
       fill: #e4e7eb; stroke: #cbd2d9; stroke-width: 1.5;
     }
-    .node-rect.active, .node-circle.active {
+    .node-circle.active {
       fill: #667eea; stroke: #4f46e5; stroke-width: 2.5;
       filter: drop-shadow(0 0 10px rgba(102,126,234,0.7));
       animation: node-pulse 1.2s ease-in-out infinite;
     }
-    .node-rect.done, .node-circle.done {
+    .node-circle.done {
       fill: #16a34a; stroke: #15803d; stroke-width: 2;
       filter: drop-shadow(0 0 6px rgba(22,163,74,0.4));
     }
-    .node-rect.failed, .node-circle.failed {
+    .node-circle.failed {
       fill: #dc2626; stroke: #991b1b; stroke-width: 2;
     }
-    .node-rect.retry, .node-circle.retry {
+    .node-circle.retry {
       fill: #fde68a; stroke: #f59e0b; stroke-width: 2; opacity: 0.75;
     }
 
@@ -128,15 +249,27 @@
     .node-icon {
       font-size: 16px; text-anchor: middle; pointer-events: none;
     }
-    .node-type-tag {
-      font-size: 8px; fill: #6b7280; text-anchor: middle; pointer-events: none;
-    }
     .round-badge {
       font-size: 9px; font-weight: 700; fill: #fff;
       text-anchor: middle; pointer-events: none;
     }
     .round-badge-bg { transition: opacity 0.3s ease; }
     .round-badge-bg.hidden { opacity: 0; }
+
+    /* Tool badges (small rounded rects under Scout / Reasoner) */
+    .tool-badge {
+      transition: fill 0.4s ease, stroke 0.4s ease, stroke-width 0.4s ease, opacity 0.4s ease;
+    }
+    .tool-badge.idle   { fill: #e4e7eb; stroke: #cbd2d9; stroke-width: 1; }
+    .tool-badge.active { fill: #667eea; stroke: #4f46e5; stroke-width: 1.5;
+      filter: drop-shadow(0 0 6px rgba(102,126,234,0.6)); }
+    .tool-badge.done   { fill: #16a34a; stroke: #15803d; stroke-width: 1.5;
+      filter: drop-shadow(0 0 4px rgba(22,163,74,0.4)); }
+    .tool-badge.failed { fill: #dc2626; stroke: #991b1b; stroke-width: 1.5; }
+    .tool-badge-label {
+      font-size: 8px; font-weight: 600; fill: #1f2933;
+      text-anchor: middle; pointer-events: none;
+    }
 
     /* Edges */
     .edge {
@@ -154,11 +287,20 @@
       stroke-dasharray: 5 3;
       animation: edge-march 0.8s linear infinite;
     }
+    /* Conditional arcs (throw-back + consult): always amber dashed, static
+       until lit (lit -> .retry adds the animated march on top). */
+    .edge.arc-cond {
+      stroke: #f59e0b; stroke-width: 2;
+      stroke-dasharray: 5 3;
+    }
     @keyframes edge-march { to { stroke-dashoffset: -10; } }
 
     .edge-label {
       font-size: 9px; fill: #f59e0b; font-weight: 600;
       text-anchor: middle; pointer-events: none;
+      /* white halo knocks the arc out behind the glyphs so the label stays legible */
+      paint-order: stroke; stroke: #ffffff; stroke-width: 3px;
+      stroke-linecap: round; stroke-linejoin: round;
     }
 
     /* ---- Trace list ---- */
@@ -202,6 +344,20 @@
     }
     .trace-body .error-text { color: #dc2626; font-size: 0.85rem; margin-top: 0.3rem; }
 
+    /* Compact tool sub-rows (nested under the owning agent row) */
+    .trace-tool-row {
+      margin-left: 1.25rem; margin-bottom: 0.35rem;
+      border-left: 3px dotted #9ca3af;
+    }
+    .trace-tool-row .trace-header { padding: 0.35rem 0.9rem; }
+    .trace-tool-row .seq { font-size: 0.7rem; min-width: 1.6rem; }
+    .trace-tool-row .name { font-size: 0.85rem; font-weight: 500; }
+    .trace-tool-row .trace-body { padding: 0 0.9rem 0.5rem; }
+    .tool-mini-badge {
+      font-size: 0.65rem; padding: 0.05rem 0.35rem; border-radius: 4px;
+      background: #fef3c7; color: #92400e; font-weight: 600; white-space: nowrap;
+    }
+
     /* ---- Itinerary rendering ---- */
     #itinerary { margin-top: 1.5rem; }
     .day-card {
@@ -239,6 +395,9 @@
     .badge.rest        { background: #d1fae5; color: #065f46; }
     .badge.unverified  { background: #fee2e2; color: #991b1b; }
     .badge.booking     { background: #ede9fe; color: #5b21b6; }
+    .badge.advisory    { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;
+      max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      vertical-align: middle; }
 
     #markdown-out { margin-top: 1.5rem; }
     #markdown-out pre {
@@ -254,7 +413,7 @@
 
     /* Accessibility: disable pulse animations */
     @media (prefers-reduced-motion: reduce) {
-      .node-rect.active, .node-circle.active,
+      .node-circle.active,
       .edge.active, .edge.retry { animation: none !important; }
     }
   </style>
@@ -262,8 +421,8 @@
 <body>
   <div class="container">
     <a class="back-link" href="/">&#8592; Back to AI Playground</a>
-    <h1>&#129518; Mr. Bounce</h1>
-    <p class="subtitle">CrewAI of 4 AI agents (3 tools) that turns your pinned places into an optimized day-by-day plan.</p>
+    <h1>&#129518; Mr. Bounce — Trip Orchestrator (CrewAI)</h1>
+    <p class="subtitle">A 4-agent crew (Scout, Reasoner, Alternatives, Compiler) with 3 tools that verifies hours and travel times, then reasons out your optimized day-by-day plan.</p>
 
     <!-- Intake form -->
     <div class="intake-form" id="intake">
@@ -283,7 +442,20 @@
       </div>
       <div class="field">
         <label for="pins">Pinned places</label>
-        <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
+        <div class="map-picker">
+          <textarea id="pins" rows="6" placeholder="One place per line &#8212; paste a Google Maps short link (https://maps.app.goo.gl/&#8230;) or just the place name"></textarea>
+          <div class="map-pane">
+            <div class="map-label">Pick on map</div>
+            <div class="map-search" id="map-search">
+              <input type="text" id="map-search-input" autocomplete="off"
+                     placeholder="Search a place to pin, e.g. Maxwell Food Centre">
+              <button type="button" id="map-search-btn">Search</button>
+              <div class="map-search-results" id="map-search-results"></div>
+            </div>
+            <div id="map" aria-label="Interactive map. Click to add a pin at that location; drag a pin to fix it."></div>
+            <div class="map-chip" id="map-chip" title="Nearest place to the last clicked point">Click the map to add a pin</div>
+          </div>
+        </div>
       </div>
       <button id="start-btn">Start Planning</button>
       <button id="delete-btn" class="delete-btn" style="display:none;">Delete Session</button>
@@ -292,17 +464,17 @@
     <div id="error"></div>
     <div id="status-msg"></div>
 
-    <!-- Animated 7-node graph -->
-    <div class="graph-wrap" id="graph-wrap" style="display:none;" aria-label="4-node CrewAI pipeline graph: Ingest, Scout, Logistics, Scheduler, Critic, Alternatives, Compiler">
+    <!-- Animated 4-agent graph -->
+    <div class="graph-wrap idle-state" id="graph-wrap" aria-label="4-agent crew pipeline graph: Scout, Reasoner, Alternatives, Compiler, each owning its tools">
       <h3>Crew Pipeline</h3>
       <div class="graph-legend">
         <span><span class="swatch agent"></span>Agent node</span>
-        <span><span class="swatch tool"></span>Tool node</span>
+        <span><span class="swatch tool"></span>Tool badge</span>
         <span><span class="swatch done"></span>Done</span>
         <span><span class="swatch fail"></span>Failed</span>
         <span><span class="swatch retry"></span>Retry round</span>
       </div>
-      <svg id="graph-svg" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="4-node CrewAI pipeline with retry loop from Critic back to Scheduler"></svg>
+      <svg id="graph-svg" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="4-agent crew pipeline with throw-back arc from Reasoner to Scout and consult arc from Reasoner to Alternatives"></svg>
     </div>
 
     <!-- Trace list -->
@@ -317,27 +489,32 @@
     "use strict";
 
     /* ---- Constants ---- */
+    /* The 4 agents of the reasoner-crew graph. `name` is the backend row
+       node_name ("scout" etc.); `label` is what the graph draws. `tools` are
+       the badge names shown under the node (full tool row name = name+"."+tool). */
     var NODES = [
-      { name: "Ingest",       type: "tool",  icon: "📥" }, /* 📥 */
-      { name: "Scout",        type: "agent", icon: "🔍" }, /* 🔍 */
-      { name: "Logistics",    type: "tool",  icon: "🚗" }, /* 🚗 */
-      { name: "Scheduler",    type: "tool",  icon: "📅" }, /* 📅 */
-      { name: "Critic",       type: "agent", icon: "✏️" }, /* ✏️ */
-      { name: "Alternatives", type: "agent", icon: "🔄" }, /* 🔄 */
-      { name: "Compiler",     type: "agent", icon: "📋" }  /* 📋 */
+      { name: "scout",        label: "Scout",        icon: "🔍", tools: ["ingest", "hours"] },
+      { name: "reasoner",     label: "Reasoner",     icon: "🧠", tools: ["logistics", "scheduler"] },
+      { name: "alternatives", label: "Alternatives", icon: "🔄", tools: [] },
+      { name: "compiler",     label: "Compiler",     icon: "📋", tools: [] }
     ];
     var NODE_W = 80;
     var NODE_H = 44;
-    var NODE_Y = 80;
-    var SPACING = 100;
+    var NODE_Y = 60;
+    var SPACING = 160;
     var X_OFFSET = 50;
     var ARC_DIP = 20;
+    var ARC_TOP_CTRL = 4;    /* throw-back arc control-point y (above the nodes) */
+    var ARC_BOT_CTRL = 186;  /* consult arc control-point y (below the nodes) */
+    var BADGE_Y = NODE_Y + NODE_H / 2 + NODE_W / 2 + 8; /* 130: tool badges sit below the circle */
     var SVG_NS = "http://www.w3.org/2000/svg";
 
     var $ = function(id) { return document.getElementById(id); };
     var sessionId = null;
     var timer = null;
     var criticRound = 0;
+
+    function nodeCenterX(j) { return X_OFFSET + j * SPACING + NODE_W / 2; }
 
     /* ---- Build the SVG graph ---- */
     function buildGraph() {
@@ -361,14 +538,17 @@
         '</marker>';
       svg.appendChild(defs);
 
-      /* Draw edges between consecutive nodes */
+      var midY = NODE_Y + NODE_H / 2;
+      var topY = NODE_Y + NODE_H / 2 - NODE_W / 2;
+      var botY = NODE_Y + NODE_H / 2 + NODE_W / 2;
+
+      /* Backbone edges between consecutive agents (curved downward) */
       for (var i = 0; i < NODES.length - 1; i++) {
-        var x1 = X_OFFSET + i * SPACING + NODE_W / 2;
-        var x2 = X_OFFSET + (i + 1) * SPACING - NODE_W / 2;
-        var y = NODE_Y + NODE_H / 2;
+        var x1 = nodeCenterX(i);
+        var x2 = nodeCenterX(i + 1);
         var cx1 = x1 + (x2 - x1) * 0.3;
         var cx2 = x1 + (x2 - x1) * 0.7;
-        var d = "M " + x1 + " " + y + " C " + cx1 + " " + (y + ARC_DIP) + ", " + cx2 + " " + (y + ARC_DIP) + ", " + x2 + " " + y;
+        var d = "M " + x1 + " " + midY + " C " + cx1 + " " + (midY + ARC_DIP) + ", " + cx2 + " " + (midY + ARC_DIP) + ", " + x2 + " " + midY;
         var edge = document.createElementNS(SVG_NS, "path");
         edge.setAttribute("class", "edge");
         edge.setAttribute("id", "edge-" + i);
@@ -377,56 +557,60 @@
         svg.appendChild(edge);
       }
 
-      /* Loop-back arc: Critic (index 4) down and back to Scheduler (index 3) */
-      var criticCx = X_OFFSET + 4 * SPACING + NODE_W / 2;
-      var schedCx = X_OFFSET + 3 * SPACING + NODE_W / 2;
-      var loopD = "M " + criticCx + " " + (NODE_Y + NODE_H) +
-                  " C " + criticCx + " " + (NODE_Y + NODE_H + 50) +
-                  ", " + schedCx + " " + (NODE_Y + NODE_H + 50) +
-                  ", " + schedCx + " " + (NODE_Y + NODE_H);
-      var loopEdge = document.createElementNS(SVG_NS, "path");
-      loopEdge.setAttribute("class", "edge");
-      loopEdge.setAttribute("id", "edge-loop");
-      loopEdge.setAttribute("d", loopD);
-      loopEdge.setAttribute("marker-end", "url(#ah-r)");
-      loopEdge.setAttribute("stroke-dasharray", "5 3");
-      svg.appendChild(loopEdge);
+      /* Conditional arc: throw-back (reasoner -> scout), arcing ABOVE the nodes.
+         Amber dashed at rest; lit (class+.retry, animated marcher) whenever a
+         scout row with round >= 1 exists in the trace. */
+      var throwEdge = document.createElementNS(SVG_NS, "path");
+      throwEdge.setAttribute("class", "edge arc-cond");
+      throwEdge.setAttribute("id", "edge-throwback");
+      throwEdge.setAttribute("d", "M " + nodeCenterX(1) + " " + topY +
+        " C " + nodeCenterX(1) + " " + ARC_TOP_CTRL + ", " + nodeCenterX(0) + " " + ARC_TOP_CTRL + ", " + nodeCenterX(0) + " " + topY);
+      throwEdge.setAttribute("marker-end", "url(#ah-r)");
+      svg.appendChild(throwEdge);
 
-      /* Loop-back label */
-      var loopLabel = document.createElementNS(SVG_NS, "text");
-      loopLabel.setAttribute("class", "edge-label");
-      loopLabel.setAttribute("x", (criticCx + schedCx) / 2);
-      loopLabel.setAttribute("y", NODE_Y + NODE_H + 55);
-      loopLabel.textContent = "retry (max 3)";
-      svg.appendChild(loopLabel);
+      var throwLabel = document.createElementNS(SVG_NS, "text");
+      throwLabel.setAttribute("class", "edge-label");
+      throwLabel.setAttribute("x", (nodeCenterX(0) + nodeCenterX(1)) / 2);
+      throwLabel.setAttribute("y", ARC_TOP_CTRL + 22);
+      throwLabel.textContent = "throw-back: re-research";
+      svg.appendChild(throwLabel);
 
-      /* Draw nodes */
+      /* Conditional arc: consult (reasoner -> alternatives), arcing BELOW the
+         nodes. Lit whenever an alternatives row appears before the last
+         reasoner row (i.e. a consult, as opposed to the final alternatives pass). */
+      var consEdge = document.createElementNS(SVG_NS, "path");
+      consEdge.setAttribute("class", "edge arc-cond");
+      consEdge.setAttribute("id", "edge-consult");
+      consEdge.setAttribute("d", "M " + nodeCenterX(1) + " " + botY +
+        " C " + nodeCenterX(1) + " " + ARC_BOT_CTRL + ", " + nodeCenterX(2) + " " + ARC_BOT_CTRL + ", " + nodeCenterX(2) + " " + botY);
+      consEdge.setAttribute("marker-end", "url(#ah-r)");
+      svg.appendChild(consEdge);
+
+      var consLabel = document.createElementNS(SVG_NS, "text");
+      consLabel.setAttribute("class", "edge-label");
+      consLabel.setAttribute("x", (nodeCenterX(1) + nodeCenterX(2)) / 2);
+      consLabel.setAttribute("y", ARC_BOT_CTRL - 3);
+      consLabel.textContent = "consult";
+      svg.appendChild(consLabel);
+
+      /* Draw agent nodes */
       for (var j = 0; j < NODES.length; j++) {
         var node = NODES[j];
         var nx = X_OFFSET + j * SPACING;
-        var isTool = node.type === "tool";
-        var shape = isTool ? "rect" : "circle";
-        var el = document.createElementNS(SVG_NS, shape);
+        var cxx = nodeCenterX(j);
+        var el = document.createElementNS(SVG_NS, "circle");
         el.setAttribute("id", "node-" + j);
-        el.setAttribute("class", (isTool ? "node-rect" : "node-circle") + " idle");
-
-        if (isTool) {
-          el.setAttribute("x", nx);
-          el.setAttribute("y", NODE_Y);
-          el.setAttribute("width", NODE_W);
-          el.setAttribute("height", NODE_H);
-          el.setAttribute("rx", 6);
-        } else {
-          el.setAttribute("cx", nx + NODE_W / 2);
-          el.setAttribute("cy", NODE_Y + NODE_H / 2);
-          el.setAttribute("r", NODE_W / 2);
-        }
+        el.setAttribute("class", "node-circle idle");
+        el.style.animationDelay = (j * 0.35) + "s";
+        el.setAttribute("cx", cxx);
+        el.setAttribute("cy", NODE_Y + NODE_H / 2);
+        el.setAttribute("r", NODE_W / 2);
         svg.appendChild(el);
 
         /* Icon */
         var iconText = document.createElementNS(SVG_NS, "text");
         iconText.setAttribute("class", "node-icon");
-        iconText.setAttribute("x", nx + NODE_W / 2);
+        iconText.setAttribute("x", cxx);
         iconText.setAttribute("y", NODE_Y + NODE_H / 2 + 5);
         iconText.textContent = node.icon;
         svg.appendChild(iconText);
@@ -434,21 +618,51 @@
         /* Label */
         var labelText = document.createElementNS(SVG_NS, "text");
         labelText.setAttribute("class", "node-label");
-        labelText.setAttribute("x", nx + NODE_W / 2);
+        labelText.setAttribute("x", cxx);
         labelText.setAttribute("y", NODE_Y + NODE_H + 18);
-        labelText.textContent = node.name;
+        labelText.textContent = node.label;
         svg.appendChild(labelText);
 
-        /* Type tag */
-        var tagText = document.createElementNS(SVG_NS, "text");
-        tagText.setAttribute("class", "node-type-tag");
-        tagText.setAttribute("x", nx + NODE_W / 2);
-        tagText.setAttribute("y", NODE_Y + NODE_H + 30);
-        tagText.textContent = node.type;
-        svg.appendChild(tagText);
+        /* Tool badges (rounded rects) under Scout and Reasoner */
+        var tools = node.tools || [];
+        if (tools.length > 0) {
+          var widths = [];
+          var totalW = 0;
+          for (var t = 0; t < tools.length; t++) {
+            var w = Math.max(26, tools[t].length * 4.6 + 10);
+            widths.push(w);
+            totalW += w;
+          }
+          totalW += (tools.length - 1) * 6; /* gaps */
+          var startX = cxx - totalW / 2;
+          for (var b = 0; b < tools.length; b++) {
+            var badgeName = tools[b];
+            var badgeId = "tool-" + node.name + "-" + badgeName;
+            var bx = startX;
 
-        /* Round badge for Scheduler and Critic */
-        if (node.name === "Scheduler" || node.name === "Critic") {
+            var badge = document.createElementNS(SVG_NS, "rect");
+            badge.setAttribute("id", badgeId);
+            badge.setAttribute("class", "tool-badge idle");
+            badge.setAttribute("x", bx);
+            badge.setAttribute("y", BADGE_Y);
+            badge.setAttribute("width", widths[b]);
+            badge.setAttribute("height", 13);
+            badge.setAttribute("rx", 5);
+            svg.appendChild(badge);
+
+            var badgeText = document.createElementNS(SVG_NS, "text");
+            badgeText.setAttribute("class", "tool-badge-label");
+            badgeText.setAttribute("x", bx + widths[b] / 2);
+            badgeText.setAttribute("y", BADGE_Y + 10);
+            badgeText.textContent = badgeName;
+            svg.appendChild(badgeText);
+
+            startX += widths[b] + 6;
+          }
+        }
+
+        /* Round badge for the Reasoner (review rounds 1..2) */
+        if (node.name === "reasoner") {
           var badgeBg = document.createElementNS(SVG_NS, "circle");
           badgeBg.setAttribute("id", "badge-" + j);
           badgeBg.setAttribute("class", "round-badge-bg hidden");
@@ -458,14 +672,14 @@
           badgeBg.setAttribute("fill", "#f59e0b");
           svg.appendChild(badgeBg);
 
-          var badgeText = document.createElementNS(SVG_NS, "text");
-          badgeText.setAttribute("class", "round-badge");
-          badgeText.setAttribute("id", "badge-text-" + j);
-          badgeText.setAttribute("x", nx + NODE_W - 6);
-          badgeText.setAttribute("y", NODE_Y + 9);
-          badgeText.textContent = "1";
-          badgeText.style.opacity = "0";
-          svg.appendChild(badgeText);
+          var badgeTx = document.createElementNS(SVG_NS, "text");
+          badgeTx.setAttribute("class", "round-badge");
+          badgeTx.setAttribute("id", "badge-text-" + j);
+          badgeTx.setAttribute("x", nx + NODE_W - 6);
+          badgeTx.setAttribute("y", NODE_Y + 9);
+          badgeTx.textContent = "1";
+          badgeTx.style.opacity = "0";
+          svg.appendChild(badgeTx);
         }
       }
     }
@@ -474,39 +688,77 @@
     function updateGraph(trace, currentNode, round) {
       var nodeStatusMap = {};
       var nodeRoundMap = {};
+      var toolStatusMap = {};
+      var scoutThrownBack = false;
+      var lastReasonerIdx = -1;
+
       for (var i = 0; i < trace.length; i++) {
         var t = trace[i];
-        nodeStatusMap[t.node_name] = t.status;
-        if (t.round != null) nodeRoundMap[t.node_name] = t.round;
-      }
-
-      for (var j = 0; j < NODES.length; j++) {
-        var name = NODES[j].name;
-        var el = $("node-" + j);
-        if (!el) continue;
-        var isTool = NODES[j].type === "tool";
-        var baseClass = isTool ? "node-rect" : "node-circle";
-
-        if (name === currentNode) {
-          el.setAttribute("class", baseClass + " active");
-        } else if (nodeStatusMap[name] === "completed") {
-          el.setAttribute("class", baseClass + " done");
-        } else if (nodeStatusMap[name] === "failed") {
-          el.setAttribute("class", baseClass + " failed");
-        } else if (nodeRoundMap[name] && nodeRoundMap[name] > 0 && name === "Scheduler") {
-          el.setAttribute("class", baseClass + " retry");
+        if (!t || typeof t !== "object") continue;
+        if (t.node_type === "tool") {
+          var st = (t.status === "ok") ? "completed" : t.status;
+        toolStatusMap[t.node_name] = st;
         } else {
-          el.setAttribute("class", baseClass + " idle");
+          nodeStatusMap[t.node_name] = (t.status === "ok") ? "completed" : t.status;
+          if (t.round != null) nodeRoundMap[t.node_name] = t.round;
+          if (t.node_name === "scout" && t.round != null && t.round >= 1) scoutThrownBack = true;
+          if (t.node_name === "reasoner") lastReasonerIdx = i;
         }
       }
 
-      /* Update edges */
-      for (var k = 0; k < NODES.length - 1; k++) {
-        var edge = $("edge-" + k);
+      /* Consult = an alternatives row that appeared before the LAST reasoner
+         row (reasoner keeps reviewing after the consult -> consult is a
+         mid-flight branch, distinct from the final alternatives pass). */
+      var consultActive = false;
+      for (var k = 0; k < lastReasonerIdx; k++) {
+        if (trace[k] && trace[k].node_name === "alternatives") { consultActive = true; break; }
+      }
+
+      var cur = String(currentNode || "").toLowerCase();
+
+      for (var j = 0; j < NODES.length; j++) {
+        var node = NODES[j];
+        var el = $("node-" + j);
+        if (!el) continue;
+
+        if (node.name === cur) {
+          el.setAttribute("class", "node-circle active");
+        } else if (nodeStatusMap[node.name] === "completed") {
+          el.setAttribute("class", "node-circle done");
+        } else if (nodeStatusMap[node.name] === "failed") {
+          el.setAttribute("class", "node-circle failed");
+        } else if (nodeRoundMap[node.name] && nodeRoundMap[node.name] > 0 && node.name === "reasoner") {
+          el.setAttribute("class", "node-circle retry");
+        } else {
+          el.setAttribute("class", "node-circle idle");
+        }
+      }
+
+      /* Tool badges: light up from tool rows (parent + status) */
+      for (var a = 0; a < NODES.length; a++) {
+        var tools = NODES[a].tools || [];
+        for (var b = 0; b < tools.length; b++) {
+          var bEl = $("tool-" + NODES[a].name + "-" + tools[b]);
+          if (!bEl) continue;
+          var st = toolStatusMap[NODES[a].name + "." + tools[b]];
+          if (st === "running" || st === "pending") {
+            bEl.setAttribute("class", "tool-badge active");
+          } else if (st === "completed") {
+            bEl.setAttribute("class", "tool-badge done");
+          } else if (st === "failed") {
+            bEl.setAttribute("class", "tool-badge failed");
+          } else {
+            bEl.setAttribute("class", "tool-badge idle");
+          }
+        }
+      }
+
+      /* Backbone edges */
+      for (var e = 0; e < NODES.length - 1; e++) {
+        var edge = $("edge-" + e);
         if (!edge) continue;
-        var toName = NODES[k + 1].name;
-        var fromDone = nodeStatusMap[NODES[k].name] === "completed";
-        var toActive = toName === currentNode;
+        var toName = NODES[e + 1].name;
+        var toActive = toName === cur;
         var toDone = nodeStatusMap[toName] === "completed";
 
         edge.setAttribute("class", "edge");
@@ -521,26 +773,25 @@
         }
       }
 
-      /* Loop-back edge */
-      var loopEdge = $("edge-loop");
-      if (loopEdge) {
-        if (round > 0 && (nodeStatusMap["Critic"] === "completed" || currentNode === "Scheduler")) {
-          loopEdge.setAttribute("class", "edge retry");
-          loopEdge.setAttribute("marker-end", "url(#ah-r)");
-        } else {
-          loopEdge.setAttribute("class", "edge");
-          loopEdge.setAttribute("marker-end", "url(#ah-r)");
-          loopEdge.setAttribute("stroke-dasharray", "5 3");
-        }
+      /* Conditional arcs: amber at rest, animated march when lit */
+      var throwEdge = $("edge-throwback");
+      if (throwEdge) {
+        throwEdge.setAttribute("class", scoutThrownBack ? "edge arc-cond retry" : "edge arc-cond");
+        throwEdge.setAttribute("marker-end", "url(#ah-r)");
+      }
+      var consEdge = $("edge-consult");
+      if (consEdge) {
+        consEdge.setAttribute("class", consultActive ? "edge arc-cond retry" : "edge arc-cond");
+        consEdge.setAttribute("marker-end", "url(#ah-r)");
       }
 
-      /* Round badges */
+      /* Round badges (Reasoner only; others have no badge element) */
       for (var n = 0; n < NODES.length; n++) {
         var badge = $("badge-" + n);
         var badgeText = $("badge-text-" + n);
         if (!badge || !badgeText) continue;
-        var r = nodeRoundMap[NODES[n].name];
-        if (r != null && r > 0) {
+        var r = nodeRoundMap[NODES[n].name] != null ? nodeRoundMap[NODES[n].name] : (round || 0);
+        if (r > 0) {
           badge.setAttribute("class", "round-badge-bg");
           badgeText.style.opacity = "1";
           badgeText.textContent = String(r);
@@ -563,50 +814,168 @@
       catch (e) { return escapeHtml(String(obj)); }
     }
 
-    /* ---- Render trace list ---- */
+    /* ---- Safe JSON parse ----
+       On preview deployments Vercel's Deployment Protection can answer API
+       calls with the SSO login HTML (302 -> vercel.com/sso-api). r.json()
+       then throws "JSON.parse: unexpected character..." — detect that and
+       tell the user what actually happened instead of a cryptic error. */
+    function ssoWallHint() {
+      return "Preview deployments are SSO-protected by Vercel: the API answered " +
+        "with a login redirect instead of data. Open this page through the " +
+        "SSO-authenticated preview URL in the same browser (or use the " +
+        "production URL), then retry.";
+    }
+
+    async function fetchJson(input, init) {
+      var r = await fetch(input, init);
+      var ct = r.headers.get("content-type") || "";
+      if (ct.indexOf("application/json") === -1) {
+        // Non-JSON answer (e.g. the SSO HTML wall). Consume text for detail.
+        var txt = "";
+        try { txt = (await r.text()).slice(0, 200); } catch (e) { /* ignore */ }
+        var err = new Error("sso-wall");
+        err.ssoWall = true;
+        err.status = r.status;
+        err.body = txt;
+        throw err;
+      }
+      var data = await r.json();
+      data.__ok = r.ok;
+      data.__status = r.status;
+      return data;
+    }
+
+    /* ---- Trace helpers ---- */
+    function statusIconFor(status) {
+      if (status === "ok") status = "completed";
+      return status === "completed" ? "✅" :
+             status === "failed" ? "❌" :
+             status === "running" ? "⏳" : "⬜";
+    }
+
+    function roundBadgeHtml(t) {
+      return (t.round != null && t.round > 0)
+        ? '<span class="badge round">R' + escapeHtml(String(t.round)) + '</span>'
+        : "";
+    }
+
+    function blockHtml(label, value) {
+      return '<div class="block"><div class="block-label">' + label + '</div><pre>' + value + '</pre></div>';
+    }
+
+    /* Full body (Input/Output/Error/Duration/Started/Finished) for a trace row —
+       shared by agent rows and tool sub-rows. */
+    function traceBodyHtml(t) {
+      return '<div class="trace-body">' +
+        blockHtml("Input", escapeJson(t.input_json)) +
+        blockHtml("Output", escapeJson(t.output_json)) +
+        (t.error ? '<div class="block"><div class="block-label">Error</div><div class="error-text">' + escapeHtml(t.error) + '</div></div>' : "") +
+        blockHtml("Duration", escapeHtml(String(t.duration_ms || "—") + ' ms')) +
+        blockHtml("Started", escapeHtml(t.started_at || "—")) +
+        blockHtml("Finished", escapeHtml(t.finished_at || "—")) +
+      '</div>';
+    }
+
+    function wireExpand(row) {
+      var header = row.querySelector(".trace-header");
+      if (header) {
+        header.addEventListener("click", function() {
+          row.classList.toggle("expanded");
+        });
+      }
+    }
+
+    /* ---- Render trace list ----
+       Agent rows keep the existing header/body. Tool rows are rendered as a
+       compact sub-row immediately after their owning agent row (indented, with
+       a "🔧 tool" mini-badge and its dotted parent.tool name). Rows for the
+       SAME agent+round collapse into one header. */
     function renderTrace(trace) {
       var ol = $("trace");
       ol.innerHTML = "";
+      if (!Array.isArray(trace)) trace = [];
+
+      var agentByKey = {};            /* "name|r<round>" -> record */
+      var agentByName = {};           /* agent name -> record of last occurrence */
+
+      function agentKey(t) {
+        return String(t.node_name) + "|r" + (t.round == null ? "" : String(t.round));
+      }
+
       for (var i = 0; i < trace.length; i++) {
         var t = trace[i];
+        if (!t || typeof t !== "object") continue;
+
+        if (t.node_type === "tool") {
+          /* Parent is the owning agent. Attach the sub-row right after the
+             parent's last rendered row (fall back to appending at the end). */
+          var parent = String(t.parent || "");
+          var rec = agentByName[parent];
+          var toolRow = document.createElement("div");
+          toolRow.className = "trace-row trace-tool-row";
+          if (t.status === "failed") toolRow.classList.add("failed");
+          toolRow.innerHTML =
+            '<div class="trace-header">' +
+              '<span class="seq">#' + escapeHtml(String(t.seq || (i + 1))) + '</span>' +
+              '<span class="status-icon">' + statusIconFor(t.status) + '</span>' +
+              '<span class="tool-mini-badge">🔧 tool</span>' +
+              '<span class="name">' + escapeHtml(t.node_name) + '</span>' +
+              '<span class="duration">' + (t.duration_ms != null ? escapeHtml(String(t.duration_ms)) + " ms" : "") + '</span>' +
+              '<span class="chevron">▶</span>' +
+            '</div>' +
+            traceBodyHtml(t);
+          wireExpand(toolRow);
+
+          var ref = (rec && rec.lastRowEl) ? rec.lastRowEl : (rec ? rec.el : null);
+          if (ref && ref.parentNode) {
+            ref.insertAdjacentElement("afterend", toolRow);
+          } else {
+            ol.appendChild(toolRow);
+          }
+          if (rec) rec.lastRowEl = toolRow;
+          continue;
+        }
+
+        /* Agent (or otherwise untagged) row */
+        var key = agentKey(t);
+        var ex = agentByKey[key];
+        if (ex) {
+          /* Same agent+round -> collapse into the existing header */
+          var header = ex.el.querySelector(".trace-header");
+          if (header) {
+            var icon = header.querySelector(".status-icon");
+            if (icon) icon.textContent = statusIconFor(t.status);
+            var badge = header.querySelector(".badge.round");
+            if (badge && t.round != null && t.round > 0) badge.textContent = "R" + String(t.round);
+          }
+          ex.el.classList.toggle("failed", t.status === "failed");
+          agentByName[String(t.node_name)] = ex;
+          continue;
+        }
+
         var row = document.createElement("div");
         row.className = "trace-row";
         if (t.status === "failed") row.classList.add("failed");
 
-        var statusIcon = t.status === "completed" ? "✅" :
-                         t.status === "failed" ? "❌" :
-                         t.status === "running" ? "⏳" : "⬜";
         var typeClass = t.node_type === "agent" ? "agent" : "tool";
-        var roundBadge = (t.round != null && t.round > 0)
-          ? '<span class="badge round">R' + escapeHtml(String(t.round)) + '</span>'
-          : "";
         var dur = t.duration_ms != null ? escapeHtml(String(t.duration_ms)) + " ms" : "";
 
         row.innerHTML =
           '<div class="trace-header">' +
             '<span class="seq">#' + escapeHtml(String(t.seq || (i + 1))) + '</span>' +
-            '<span class="status-icon">' + statusIcon + '</span>' +
+            '<span class="status-icon">' + statusIconFor(t.status) + '</span>' +
             '<span class="name">' + escapeHtml(t.node_name) + '</span>' +
             '<span class="badge ' + typeClass + '">' + escapeHtml(t.node_type || "") + '</span>' +
-            roundBadge +
+            roundBadgeHtml(t) +
             '<span class="duration">' + dur + '</span>' +
             '<span class="chevron">▶</span>' +
           '</div>' +
-          '<div class="trace-body">' +
-            '<div class="block"><div class="block-label">Input</div><pre>' + escapeJson(t.input_json) + '</pre></div>' +
-            '<div class="block"><div class="block-label">Output</div><pre>' + escapeJson(t.output_json) + '</pre></div>' +
-            (t.error ? '<div class="block"><div class="block-label">Error</div><div class="error-text">' + escapeHtml(t.error) + '</div></div>' : "") +
-            '<div class="block"><div class="block-label">Duration</div><pre>' + escapeHtml(String(t.duration_ms || "—") + ' ms') + '</pre></div>' +
-            '<div class="block"><div class="block-label">Started</div><pre>' + escapeHtml(t.started_at || "—") + '</pre></div>' +
-            '<div class="block"><div class="block-label">Finished</div><pre>' + escapeHtml(t.finished_at || "—") + '</pre></div>' +
-          '</div>';
+          traceBodyHtml(t);
+        wireExpand(row);
 
-        (function(r) {
-          r.querySelector(".trace-header").addEventListener("click", function() {
-            r.classList.toggle("expanded");
-          });
-        })(row);
-
+        var rec = { el: row, lastRowEl: row };
+        agentByKey[key] = rec;
+        agentByName[String(t.node_name)] = rec;
         ol.appendChild(row);
       }
     }
@@ -653,6 +1022,8 @@
             ? ' <span class="badge unverified">[unverified]</span>' : "";
           var booking = stop.booking_required
             ? ' <span class="badge booking">booking required</span>' : "";
+          var advisoryHtml = stop.advisory_note
+            ? ' <span class="badge advisory" title="' + escapeHtml(stop.advisory_note) + '">⏱ ' + escapeHtml(stop.advisory_note) + '</span>' : "";
           var addrHtml = stop.address ? '<div class="stop-addr">' + escapeHtml(stop.address) + '</div>' : "";
           var tipsHtml = stop.tips ? '<div class="stop-tips">💡 ' + escapeHtml(stop.tips) + '</div>' : "";
 
@@ -660,7 +1031,7 @@
             '<span class="stop-time">' + escapeHtml(stop.time || "") + '</span>' +
             '<span class="stop-name">' + escapeHtml(stop.name || "") + '</span>' +
             ' <span class="badge ' + kindClass + '">' + escapeHtml(kind) + '</span>' +
-            unverified + booking + addrHtml + tipsHtml;
+            unverified + booking + advisoryHtml + addrHtml + tipsHtml;
 
           if (stop.leg) {
             var leg = stop.leg;
@@ -705,13 +1076,12 @@
 
     async function step() {
       try {
-        var r = await fetch("/api/planner_step", {
+        var data = await fetchJson("/api/planner_step", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: sessionId })
         });
-        var data = await r.json();
-        if (!r.ok) {
+        if (!data.__ok) {
           if (data.detail && data.detail.indexOf("already completed") >= 0) {
             await fetchAndRenderStatus();
             return false;
@@ -736,20 +1106,19 @@
         await fetchAndRenderStatus();
         return true;
       } catch (e) {
-        $("error").textContent = "Network error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
         return false;
       }
     }
 
     async function fetchAndRenderStatus() {
       try {
-        var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
-        if (!r.ok) {
-          var errData = await r.json();
-          $("error").textContent = errData.detail || "Status fetch failed.";
+        var data = await fetchJson("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+        if (!data.__ok) {
+          $("error").textContent = data.detail || "Status fetch failed.";
           return;
         }
-        var data = await r.json();
         criticRound = data.critic_round || 0;
         updateGraph(data.trace || [], data.current_node, criticRound);
         renderTrace(data.trace || []);
@@ -764,7 +1133,8 @@
           $("status-msg").textContent = "Running… (node: " + (data.current_node || "—") + ")";
         }
       } catch (e) {
-        $("error").textContent = "Status fetch error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Status fetch error: " + (e.message || e);
       }
     }
 
@@ -791,26 +1161,26 @@
       $("start-btn").disabled = true;
 
       try {
-        var r = await fetch("/api/planner_start", {
+        var data = await fetchJson("/api/planner_start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ destination: dest, start_date: startDate, num_days: numDays, pins: pins })
         });
-        var data = await r.json();
-        if (!r.ok) {
+        if (!data.__ok) {
           $("error").textContent = data.detail || "Start failed.";
           $("start-btn").disabled = false;
           return;
         }
         sessionId = data.session_id;
         history.replaceState(null, "", "?session_id=" + encodeURIComponent(sessionId));
-        $("graph-wrap").style.display = "";
+        $("graph-wrap").classList.remove("idle-state");
         buildGraph();
         $("status-msg").textContent = "Session started. Running crew…";
         $("delete-btn").style.display = "";
         pollLoop();
       } catch (e) {
-        $("error").textContent = "Network error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
         $("start-btn").disabled = false;
       }
     });
@@ -828,7 +1198,8 @@
       } catch (e) { /* ignore */ }
       sessionId = null;
       history.replaceState(null, "", location.pathname);
-      $("graph-wrap").style.display = "none";
+      $("graph-wrap").classList.add("idle-state");
+      buildGraph();
       $("trace").innerHTML = "";
       $("itinerary").innerHTML = "";
       $("markdown-out").innerHTML = "";
@@ -844,15 +1215,14 @@
       var sid = params.get("session_id");
       if (sid) {
         sessionId = sid;
-        $("graph-wrap").style.display = "";
+        $("graph-wrap").classList.remove("idle-state");
         buildGraph();
         $("delete-btn").style.display = "";
         $("start-btn").disabled = true;
         await fetchAndRenderStatus();
         try {
-          var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
-          if (r.ok) {
-            var data = await r.json();
+          var data = await fetchJson("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+          if (data.__ok) {
             if (data.status === "pending" || data.status === "running") {
               pollLoop();
             } else {
@@ -862,10 +1232,326 @@
             $("start-btn").disabled = false;
           }
         } catch (e) {
+          if (e.ssoWall) $("error").textContent = ssoWallHint();
           $("start-btn").disabled = false;
         }
       }
     })();
+
+    /* ===================================================================
+       MAP PICKER — interactive map below the pins textarea.
+       Self-contained, vanilla JS, Leaflet 1.9.4. Tolerates the geocode
+       endpoint being absent (local dev): click-to-insert is fully offline.
+       =================================================================== */
+    var map = null;              // L.Map instance
+    var markerLayer = null;      // L.LayerGroup holding all pin markers
+    var mapParseTimer = null;    // debounce timer for textarea -> markers
+    var searchController = null;  // AbortController for the in-flight search request
+
+    /* Pragmatic coordinate regex: matches `query=lat,lng`, `q=lat,lng`,
+       or `@lat,lng`. Capture 1 = prefix, 2 = lat, 3 = lng. */
+    var COORD_RE = /((?:query=|q=|@))(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/;
+
+    function extractCoords(line) {
+      var m = line.match(COORD_RE);
+      if (!m) return null;
+      return {
+        lat: parseFloat(m[2]),
+        lng: parseFloat(m[3]),
+        prefix: m[1],
+        index: m.index,
+        length: m[0].length
+      };
+    }
+
+    function fireInput(ta) {
+      try {
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (e) { /* input listener is optional; ignore */ }
+    }
+
+    /* Parse every textarea line; return {line,index,hasCoords,lat,lng}[] */
+    function parsePins() {
+      var lines = $("pins").value.split("\n");
+      var out = [];
+      for (var i = 0; i < lines.length; i++) {
+        var m = extractCoords(lines[i]);
+        out.push({
+          line: lines[i],
+          index: i,
+          hasCoords: !!m,
+          lat: m ? m.lat : null,
+          lng: m ? m.lng : null
+        });
+      }
+      return out;
+    }
+
+    /* Rebuild the marker layer from the textarea. Called ONLY from input
+       events (debounced), never from dragend, so we never rebuild while
+       the user is mid-drag. */
+    function rebuildMarkers() {
+      if (!map || !markerLayer) return;
+      markerLayer.clearLayers();
+      var parsed = parsePins();
+      for (var i = 0; i < parsed.length; i++) {
+        var p = parsed[i];
+        if (!p.hasCoords) continue;
+        var marker = L.marker([p.lat, p.lng], { draggable: true });
+        marker._pinLineIndex = p.index;
+        marker._pinLine = p.line;          // exact text parsed for this marker
+        var label = p.line.trim();
+        var popup = label.length > 40 ? label.slice(0, 40) + "…" : label;
+        marker.bindPopup(escapeHtml(popup));
+        marker.on("dragend", function(ev) { handleDragEnd(ev.target); });
+        marker.addTo(markerLayer);
+      }
+    }
+
+    /* On dragend, rewrite ONLY the dragged line's coords. Byte-identical
+       elsewhere. If the line moved/changed since parse, drop the edit. */
+    function handleDragEnd(marker) {
+      var idx = marker._pinLineIndex;
+      var latlng = marker.getLatLng();
+      var lines = $("pins").value.split("\n");
+      if (idx < 0 || idx >= lines.length) return;
+      var line = lines[idx];
+      /* The textarea changed since we parsed this marker (insert/reorder/
+         edit) -> do not corrupt a different line; drop the edit safely. */
+      if (line !== marker._pinLine) return;
+      var m = extractCoords(line);
+      if (!m) return; // the line's coordinate match is gone
+      var newLat = latlng.lat.toFixed(6);
+      var newLng = latlng.lng.toFixed(6);
+      var newLine = line.slice(0, m.index) + m.prefix + newLat + "," + newLng +
+                    line.slice(m.index + m.length);
+      lines[idx] = newLine;
+      var newValue = lines.join("\n");
+      if (newValue !== $("pins").value) {
+        $("pins").value = newValue;
+        fireInput($("pins"));
+      }
+    }
+
+    /* Shared pin-line insert: builds the Google Maps search link with 6-decimal
+       lat,lng (byte-identical for map clicks and search-result picks), appends
+       it to #pins with the same newline rules, and fires the input event so markers
+       rebuild. Does NOT touch the chip — callers own any enrichment. */
+    function insertPinLine(lat, lng) {
+      var line = "https://www.google.com/maps/search/?api=1&query=" +
+                 lat.toFixed(6) + "," + lng.toFixed(6);
+      var ta = $("pins");
+      var val = ta.value;
+      if (val.length > 0 && !val.endsWith("\n")) {
+        ta.value = val + "\n" + line;
+      } else {
+        ta.value = val + line;
+      }
+      fireInput(ta);
+      return line;
+    }
+
+    /* Insert a pin line instantly on map click (offline-safe: no network).
+       The chip enrichment is a separate async, optional step. */
+    function onMapClick(ev) {
+      var lat = ev.latlng.lat;
+      var lng = ev.latlng.lng;
+      insertPinLine(lat, lng);
+      enrichNearest(lat, lng);
+    }
+
+    /* Optional async enrichment of the chip near the map. Informational
+       only — never touches the textarea. Falls back to lat,lng. */
+    function enrichNearest(lat, lng) {
+      var chip = $("map-chip");
+      if (!chip) return;
+      chip.textContent = "nearest: " + lat.toFixed(6) + ", " + lng.toFixed(6);
+      var controller = new AbortController();
+      var timeout = setTimeout(function() { controller.abort(); }, 6000);
+      fetch("/api/planner?action=geocode&lat=" + encodeURIComponent(lat) +
+            "&lng=" + encodeURIComponent(lng), { signal: controller.signal })
+        .then(function(r) {
+          var ct = r.headers.get("content-type") || "";
+          if (ct.indexOf("application/json") === -1) throw new Error("non-json");
+          return r.json();
+        })
+        .then(function(data) {
+          clearTimeout(timeout);
+          if (data && typeof data === "object") {
+            var label = (data.name != null && data.name !== "") ? data.name
+                       : (data.address != null && data.address !== "") ? data.address
+                       : null;
+            if (label) chip.textContent = "nearest: " + String(label);
+          }
+        })
+        .catch(function() { clearTimeout(timeout); }); // keep lat,lng fallback
+    }
+
+    /* ---- Map search (Google-Maps-style): find a named place and pin it ----
+       Fires only on explicit user action (Enter / Search click), reads the
+       city fresh from #dest each call, and degrades gracefully to an inline
+       dropdown message if the search endpoint is missing. */
+
+    function closeSearchDropdown() {
+      var dd = $("map-search-results");
+      if (dd) dd.style.display = "none";
+    }
+
+    function renderSearchMessage(text) {
+      var dd = $("map-search-results");
+      if (!dd) return;
+      dd.innerHTML = "";
+      var row = document.createElement("div");
+      row.className = "map-search-row map-search-message";
+      row.textContent = text;
+      dd.appendChild(row);
+      dd.style.display = "block";
+    }
+
+    function renderSearchResults(results) {
+      var dd = $("map-search-results");
+      if (!dd) return;
+      dd.innerHTML = "";
+      for (var i = 0; i < results.length; i++) {
+        (function(r) {
+          var row = document.createElement("div");
+          row.className = "map-search-row";
+          var nameEl = document.createElement("div");
+          nameEl.className = "map-search-name";
+          nameEl.textContent = r.name || "Unnamed place";
+          row.appendChild(nameEl);
+          if (r.address) {
+            var addrEl = document.createElement("div");
+            addrEl.className = "map-search-addr";
+            addrEl.textContent = r.address;
+            row.appendChild(addrEl);
+          }
+          row.addEventListener("click", function() { onSearchResultClick(r); });
+          dd.appendChild(row);
+        })(results[i]);
+      }
+      dd.style.display = "block";
+    }
+
+    /* Run the search. The city is read fresh from #dest every time — never
+       cached. Button is disabled + relabeled while in flight and restored
+       after. A newer search supersedes an older one (its render is skipped). */
+    async function searchPlaces() {
+      var input = $("map-search-input");
+      var q = input ? input.value.trim() : "";
+      if (!q) { closeSearchDropdown(); return; }
+      var city = ($("dest").value || "").trim();
+      var url = "/api/planner?action=search&q=" + encodeURIComponent(q) +
+                "&city=" + encodeURIComponent(city);
+      var btn = $("map-search-btn");
+      if (btn) { btn.disabled = true; btn.textContent = "Searching…"; }
+      if (searchController) searchController.abort();
+      var controller = new AbortController();
+      searchController = controller;
+      var timeout = setTimeout(function() { controller.abort(); }, 8000);
+      var data = null;
+      var ok = false;
+      try {
+        var r = await fetch(url, { signal: controller.signal });
+        var ct = r.headers.get("content-type") || "";
+        if (!r.ok || ct.indexOf("application/json") === -1) throw new Error("search_failed");
+        data = await r.json();
+        ok = true;
+      } catch (e) {
+        ok = false; // network error, abort (8s timeout), or non-JSON body
+      }
+      clearTimeout(timeout);
+      if (searchController !== controller) return; // superseded by a newer search
+      searchController = null;
+      if (btn) { btn.disabled = false; btn.textContent = "Search"; }
+      if (!ok || !data || typeof data !== "object" || !Array.isArray(data.results)) {
+        renderSearchMessage("Search unavailable — try again");
+        return;
+      }
+      if (data.results.length === 0) {
+        renderSearchMessage("No matches found");
+        return;
+      }
+      renderSearchResults(data.results.slice(0, 6));
+    }
+
+    /* Pick a result row: fly to it (when the map loaded), insert the pin line
+       via the shared insert path, tag the chip with the found name (no
+       reverse-geocode fetch needed), close the dropdown, then clear + refocus
+       the input. Null coordinates -> just close. */
+    function onSearchResultClick(result) {
+      closeSearchDropdown();
+      var lat = result && result.lat != null ? parseFloat(result.lat) : NaN;
+      var lng = result && result.lng != null ? parseFloat(result.lng) : NaN;
+      if (isNaN(lat) || isNaN(lng)) return; // null coords -> just close
+      if (map) map.flyTo([lat, lng], 16);
+      insertPinLine(lat, lng);
+      var name = (result.name != null && result.name !== "") ? result.name
+               : (result.address != null && result.address !== "") ? result.address : null;
+      var chip = $("map-chip");
+      if (chip) chip.textContent = "nearest: " + (name || lat.toFixed(6) + ", " + lng.toFixed(6));
+      var input = $("map-search-input");
+      if (input) { input.value = ""; input.focus(); }
+    }
+
+    /* Initialize the map once the DOM is ready. */
+    function initMapPicker() {
+      if (map) return;
+      if (typeof L === "undefined") {
+        var pane = $("map");
+        if (pane) pane.textContent = "Map unavailable (Leaflet failed to load).";
+        return;
+      }
+      map = L.map("map").setView([1.3521, 103.8198], 12);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+      markerLayer = L.layerGroup().addTo(map);
+      map.on("click", onMapClick);
+      rebuildMarkers();
+      /* Fix any zero-size timing issue and on viewport resize/column stack */
+      setTimeout(function() { if (map) map.invalidateSize(); }, 0);
+      window.addEventListener("resize", function() {
+        if (map) map.invalidateSize();
+      });
+    }
+
+    $("pins").addEventListener("input", function() {
+      if (mapParseTimer) clearTimeout(mapParseTimer);
+      mapParseTimer = setTimeout(rebuildMarkers, 300);
+    });
+
+    /* ---- Map search event wiring ---- */
+    var searchBtn = $("map-search-btn");
+    var searchInput = $("map-search-input");
+    if (searchBtn) {
+      searchBtn.addEventListener("click", function() { searchPlaces(); });
+    }
+    if (searchInput) {
+      searchInput.addEventListener("keydown", function(ev) {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          searchPlaces();
+        }
+      });
+    }
+    /* Clicking anywhere outside the search row closes the dropdown. */
+    document.addEventListener("click", function(ev) {
+      var wrap = $("map-search");
+      if (wrap && wrap.contains(ev.target)) return;
+      closeSearchDropdown();
+    });
+    /* Escape closes the dropdown. */
+    document.addEventListener("keydown", function(ev) {
+      if (ev.key === "Escape") closeSearchDropdown();
+    });
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function(){ initMapPicker(); buildGraph(); });
+    } else {
+      initMapPicker();
+    }
   </script>
 </body>
 </html>

@@ -49,8 +49,9 @@ def _fresh_ctx(**overrides) -> dict:
     return ctx
 
 
-def _make_registry(critic_fn=None) -> dict:
-    """Build a fake 7-node registry.  ``critic_fn`` overrides the critic."""
+def _make_registry(reasoner_fn=None, critic_fn=None) -> dict:
+    """Build a fake 4-agent registry.  ``reasoner_fn`` overrides the reasoner
+    (``critic_fn`` kept as a deprecated alias)."""
     def _noop(ctx):
         return {}
 
@@ -70,8 +71,8 @@ def _make_registry(critic_fn=None) -> dict:
         ctx["schedule"] = {"days": []}
         return {"schedule": True}
 
-    def _default_critic(ctx):
-        ctx["critic"] = {"verdict": "PASS"}
+    def _default_reasoner(ctx):
+        ctx["reasoner"] = {"verdict": "PASS"}
         return {"verdict": "PASS"}
 
     def _alternatives(ctx):
@@ -82,12 +83,10 @@ def _make_registry(critic_fn=None) -> dict:
         ctx["itinerary"] = {"days": []}
         return {"itinerary": "compiled"}
 
+    fn = reasoner_fn if reasoner_fn is not None else critic_fn
     return {
-        "ingest": _ingest,
         "scout": _scout,
-        "logistics": _logistics,
-        "scheduler": _scheduler,
-        "critic": critic_fn if critic_fn is not None else _default_critic,
+        "reasoner": fn if fn is not None else _default_reasoner,
         "alternatives": _alternatives,
         "compiler": _compiler,
     }
@@ -102,24 +101,20 @@ class TestLoadGraph:
     def test_real_yaml_validates(self):
         graph = load_graph()
         names = [n["name"] for n in graph["nodes"]]
-        assert names == [
-            "ingest",
-            "scout",
-            "logistics",
-            "scheduler",
-            "critic",
-            "alternatives",
-            "compiler",
-        ]
+        assert names == ["scout", "reasoner", "alternatives", "compiler"]
         types = {n["name"]: n["type"] for n in graph["nodes"]}
         assert types == {
-            "ingest": "tool",
             "scout": "agent",
-            "logistics": "tool",
-            "scheduler": "tool",
-            "critic": "agent",
+            "reasoner": "agent",
             "alternatives": "agent",
             "compiler": "agent",
+        }
+        tools = {n["name"]: n.get("tools") for n in graph["nodes"]}
+        assert tools == {
+            "scout": ["ingest", "hours"],
+            "reasoner": ["logistics", "scheduler"],
+            "alternatives": None,
+            "compiler": None,
         }
 
     def test_graph_path_points_to_repo_root(self):
@@ -270,7 +265,7 @@ class TestHappyPath:
         ctx = _fresh_ctx()
         sink = InMemorySink()
         graph = load_graph()
-        registry = _make_registry()  # critic returns PASS on first run
+        registry = _make_registry()  # reasoner returns PASS on first run
 
         rows: list[dict] = []
         for _ in range(20):  # generous upper bound
@@ -282,18 +277,22 @@ class TestHappyPath:
         assert run_status(ctx)["is_completed"] is True
         assert ctx["current_node"] is None
 
-        # Exactly 7 nodes ran (ingest -> scout -> logistics -> scheduler ->
-        # critic -> alternatives -> compiler).
-        assert len(rows) == 7
+        # Exactly 4 agent nodes ran (scout -> reasoner -> alternatives ->
+        # compiler); the tools they own run INSIDE their turns and appear as
+        # separate tool rows in the sink, not as agent rows.
+        assert len(rows) == 4
         assert [r["node_name"] for r in rows] == [
-            "ingest",
             "scout",
-            "logistics",
-            "scheduler",
-            "critic",
+            "reasoner",
             "alternatives",
             "compiler",
         ]
+        # Tool rows from the owned tools are in the sink with parent linkage.
+        agent_names = {r["node_name"] for r in rows}
+        tool_rows = [r for r in sink if r.get("node_type") == "tool"]
+        for tr in tool_rows:
+            assert tr["parent"] in agent_names
+            assert tr["node_name"].startswith(tr["parent"] + ".")
         # Every row is ok, has ISO timestamps, and non-negative duration.
         for r in rows:
             assert r["status"] == "ok"
@@ -314,22 +313,29 @@ class TestHappyPath:
 
 
 class TestLoopBack:
-    def test_critic_loops_then_passes(self):
+    def test_reasoner_loops_then_passes(self):
+        """The reasoner's draft->review->re-draft loop is INTERNAL to its turn
+        in v2; the graph-level loop edges are the two conditional returns
+        (re_research / consult).  A reasoner stub that ISSUES twice then PASSes
+        must complete the pipeline with the verdict stored on ctx."""
         ctx = _fresh_ctx()
         sink = InMemorySink()
         graph = load_graph()
 
         call_count = {"n": 0}
 
-        def critic_fn(ctx):
+        def reasoner_fn(ctx):
             call_count["n"] += 1
             if call_count["n"] <= 2:
-                ctx["critic"] = {"verdict": "ISSUES", "issues": ["too many stops"]}
-                return {"verdict": "ISSUES", "issues": ["too many stops"]}
-            ctx["critic"] = {"verdict": "PASS"}
-            return {"verdict": "PASS"}
+                out = {"verdict": "ISSUES", "issues": ["too many stops"],
+                       "directives": [], "re_research": [], "consult_alternatives": False}
+            else:
+                out = {"verdict": "PASS", "issues": [], "directives": [],
+                       "re_research": [], "consult_alternatives": False}
+            ctx["reasoner"] = out
+            return out
 
-        registry = _make_registry(critic_fn=critic_fn)
+        registry = _make_registry(reasoner_fn=reasoner_fn)
 
         rows: list[dict] = []
         for _ in range(30):
@@ -340,23 +346,19 @@ class TestLoopBack:
 
         node_seq = [r["node_name"] for r in rows]
 
-        # scheduler ran 3 times (initial + 2 loops).
-        assert node_seq.count("scheduler") == 3
-        # critic ran 3 times (2 fails + 1 pass).
-        assert node_seq.count("critic") == 3
-        # Pipeline completed.
+        # Pipeline completed with a single pass over the 4-agent backbone.
         assert ctx["current_node"] is None
         assert run_status(ctx)["is_completed"] is True
-        # critic_round is 2 at end (incremented after 2 fail routes).
-        assert ctx["critic_round"] == 2
-
-        # Trace rows for critic show rounds 0, 1, 2.
-        critic_rows = [r for r in rows if r["node_name"] == "critic"]
-        assert [r["round"] for r in critic_rows] == [0, 1, 2]
-
-        # Alternatives and compiler each ran once (after the pass).
+        # The reasoner AGENT node runs exactly once at graph level — its
+        # draft->review->re-draft loop is internal to run_reasoner (unit-tested
+        # in test_planner_agents), not a graph-level re-entry.
+        assert node_seq.count("reasoner") == 1
         assert node_seq.count("alternatives") == 1
         assert node_seq.count("compiler") == 1
+        assert call_count["n"] == 1
+        # ISSUES with empty re_research/consult flags routes forward, and the
+        # final verdict is whatever the stub last returned.
+        assert ctx["reasoner"]["verdict"] == "ISSUES"
 
 
 # ---------------------------------------------------------------------------
@@ -365,16 +367,21 @@ class TestLoopBack:
 
 
 class TestBound:
-    def test_critic_always_fails_force_proceeds(self):
+    def test_reasoner_issues_still_completes(self):
+        """A reasoner that always returns ISSUES must not block the pipeline:
+        in v2 the review loop is internal (bounded by max_reasoner_rounds) and
+        the graph proceeds to alternatives/compiler with issues surfaced."""
         ctx = _fresh_ctx()
         sink = InMemorySink()
         graph = load_graph()
 
-        def critic_fn(ctx):
-            ctx["critic"] = {"verdict": "ISSUES"}
-            return {"verdict": "ISSUES", "issues": ["nope"]}
+        def reasoner_fn(ctx):
+            ctx["reasoner"] = {"verdict": "ISSUES", "issues": ["nope"],
+                               "directives": [], "re_research": [],
+                               "consult_alternatives": False}
+            return ctx["reasoner"]
 
-        registry = _make_registry(critic_fn=critic_fn)
+        registry = _make_registry(reasoner_fn=reasoner_fn)
 
         rows: list[dict] = []
         for _ in range(30):
@@ -385,15 +392,10 @@ class TestBound:
 
         node_seq = [r["node_name"] for r in rows]
 
-        # scheduler ran exactly 3 times (rounds 0, 1, 2).
-        assert node_seq.count("scheduler") == 3
-        # critic ran exactly 3 times (always fails, but bounded).
-        assert node_seq.count("critic") == 3
-        # No infinite loop — pipeline terminated.
+        # No infinite loop — pipeline terminated through the backbone.
         assert ctx["current_node"] is None
         assert run_status(ctx)["is_completed"] is True
-        # The error message appears.
-        assert any("critic: max rounds reached" in e for e in ctx["errors"])
+        assert node_seq.count("reasoner") == 1
         # Alternatives + compiler still ran.
         assert "alternatives" in node_seq
         assert "compiler" in node_seq
@@ -410,44 +412,40 @@ class TestFailedNode:
         sink = InMemorySink()
         graph = load_graph()
 
-        registry = _make_registry()
+        def boom_agent(ctx):
+            raise RuntimeError("reasoner exploded")
 
-        def boom(ctx):
-            raise RuntimeError("logistics exploded")
+        registry = _make_registry(reasoner_fn=boom_agent)
 
-        registry["logistics"] = boom
-
-        rows: list[dict] = []
+        rows2: list[dict] = []
         for _ in range(20):
             row = advance(ctx, registry, sink, graph)
-            rows.append(row)
+            rows2.append(row)
             if run_status(ctx)["is_completed"]:
                 break
 
-        node_seq = [r["node_name"] for r in rows]
+        node_seq = [r["node_name"] for r in rows2]
 
-        # Logistics ran but failed.
-        log_row = next(r for r in rows if r["node_name"] == "logistics")
-        assert log_row["status"] == "failed"
-        assert "logistics exploded" in log_row["error"]
-        # Pipeline still reached terminal.
+        # Reasoner ran but failed.
+        rs_row = next(r for r in rows2 if r["node_name"] == "reasoner")
+        assert rs_row["status"] == "failed"
+        assert "reasoner exploded" in rs_row["error"]
+        # Pipeline still reached terminal (failed agent routes forward).
         assert ctx["current_node"] is None
         assert "compiler" in node_seq
         # The error is in ctx["errors"].
-        assert any("logistics exploded" in e for e in ctx["errors"])
+        assert any("reasoner exploded" in e for e in ctx["errors"])
 
-    def test_failed_critic_routes_forward(self):
-        """A failed critic (exception, not a verdict) routes to pass_next."""
+    def test_failed_reasoner_routes_forward(self):
+        """A failed reasoner (exception, not a verdict) routes forward."""
         ctx = _fresh_ctx()
         sink = InMemorySink()
         graph = load_graph()
 
-        registry = _make_registry()
-
         def boom(ctx):
-            raise RuntimeError("critic crashed")
+            raise RuntimeError("reasoner crashed")
 
-        registry["critic"] = boom
+        registry = _make_registry(reasoner_fn=boom)
 
         rows: list[dict] = []
         for _ in range(20):
@@ -458,11 +456,9 @@ class TestFailedNode:
 
         node_seq = [r["node_name"] for r in rows]
 
-        # Critic failed but routed forward to alternatives (not back to scheduler).
-        assert "critic" in node_seq
+        # Reasoner failed but routed forward to alternatives.
+        assert "reasoner" in node_seq
         assert "alternatives" in node_seq
-        # Scheduler ran only once (no loop-back on a failed critic).
-        assert node_seq.count("scheduler") == 1
         assert ctx["current_node"] is None
 
 
