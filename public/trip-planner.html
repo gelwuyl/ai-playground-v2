@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mr. Bounce — Trip Orchestrator</title>
+  <title>Mr. Bounce — Trip Orchestrator (CrewAI)</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/story.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -421,7 +421,7 @@
 <body>
   <div class="container">
     <a class="back-link" href="/">&#8592; Back to AI Playground</a>
-    <h1>&#129518; Mr. Bounce</h1>
+    <h1>&#129518; Mr. Bounce — Trip Orchestrator (CrewAI)</h1>
     <p class="subtitle">A 4-agent crew (Scout, Reasoner, Alternatives, Compiler) with 3 tools that verifies hours and travel times, then reasons out your optimized day-by-day plan.</p>
 
     <!-- Intake form -->
@@ -814,6 +814,37 @@
       catch (e) { return escapeHtml(String(obj)); }
     }
 
+    /* ---- Safe JSON parse ----
+       On preview deployments Vercel's Deployment Protection can answer API
+       calls with the SSO login HTML (302 -> vercel.com/sso-api). r.json()
+       then throws "JSON.parse: unexpected character..." — detect that and
+       tell the user what actually happened instead of a cryptic error. */
+    function ssoWallHint() {
+      return "Preview deployments are SSO-protected by Vercel: the API answered " +
+        "with a login redirect instead of data. Open this page through the " +
+        "SSO-authenticated preview URL in the same browser (or use the " +
+        "production URL), then retry.";
+    }
+
+    async function fetchJson(input, init) {
+      var r = await fetch(input, init);
+      var ct = r.headers.get("content-type") || "";
+      if (ct.indexOf("application/json") === -1) {
+        // Non-JSON answer (e.g. the SSO HTML wall). Consume text for detail.
+        var txt = "";
+        try { txt = (await r.text()).slice(0, 200); } catch (e) { /* ignore */ }
+        var err = new Error("sso-wall");
+        err.ssoWall = true;
+        err.status = r.status;
+        err.body = txt;
+        throw err;
+      }
+      var data = await r.json();
+      data.__ok = r.ok;
+      data.__status = r.status;
+      return data;
+    }
+
     /* ---- Trace helpers ---- */
     function statusIconFor(status) {
       if (status === "ok") status = "completed";
@@ -1045,13 +1076,12 @@
 
     async function step() {
       try {
-        var r = await fetch("/api/planner_step", {
+        var data = await fetchJson("/api/planner_step", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: sessionId })
         });
-        var data = await r.json();
-        if (!r.ok) {
+        if (!data.__ok) {
           if (data.detail && data.detail.indexOf("already completed") >= 0) {
             await fetchAndRenderStatus();
             return false;
@@ -1076,20 +1106,19 @@
         await fetchAndRenderStatus();
         return true;
       } catch (e) {
-        $("error").textContent = "Network error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
         return false;
       }
     }
 
     async function fetchAndRenderStatus() {
       try {
-        var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
-        if (!r.ok) {
-          var errData = await r.json();
-          $("error").textContent = errData.detail || "Status fetch failed.";
+        var data = await fetchJson("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+        if (!data.__ok) {
+          $("error").textContent = data.detail || "Status fetch failed.";
           return;
         }
-        var data = await r.json();
         criticRound = data.critic_round || 0;
         updateGraph(data.trace || [], data.current_node, criticRound);
         renderTrace(data.trace || []);
@@ -1104,7 +1133,8 @@
           $("status-msg").textContent = "Running… (node: " + (data.current_node || "—") + ")";
         }
       } catch (e) {
-        $("error").textContent = "Status fetch error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Status fetch error: " + (e.message || e);
       }
     }
 
@@ -1131,13 +1161,12 @@
       $("start-btn").disabled = true;
 
       try {
-        var r = await fetch("/api/planner_start", {
+        var data = await fetchJson("/api/planner_start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ destination: dest, start_date: startDate, num_days: numDays, pins: pins })
         });
-        var data = await r.json();
-        if (!r.ok) {
+        if (!data.__ok) {
           $("error").textContent = data.detail || "Start failed.";
           $("start-btn").disabled = false;
           return;
@@ -1150,7 +1179,8 @@
         $("delete-btn").style.display = "";
         pollLoop();
       } catch (e) {
-        $("error").textContent = "Network error: " + (e.message || e);
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
         $("start-btn").disabled = false;
       }
     });
@@ -1191,9 +1221,8 @@
         $("start-btn").disabled = true;
         await fetchAndRenderStatus();
         try {
-          var r = await fetch("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
-          if (r.ok) {
-            var data = await r.json();
+          var data = await fetchJson("/api/planner_status?session_id=" + encodeURIComponent(sessionId));
+          if (data.__ok) {
             if (data.status === "pending" || data.status === "running") {
               pollLoop();
             } else {
@@ -1203,6 +1232,7 @@
             $("start-btn").disabled = false;
           }
         } catch (e) {
+          if (e.ssoWall) $("error").textContent = ssoWallHint();
           $("start-btn").disabled = false;
         }
       }
@@ -1340,7 +1370,11 @@
       var timeout = setTimeout(function() { controller.abort(); }, 6000);
       fetch("/api/planner?action=geocode&lat=" + encodeURIComponent(lat) +
             "&lng=" + encodeURIComponent(lng), { signal: controller.signal })
-        .then(function(r) { return r.json(); })
+        .then(function(r) {
+          var ct = r.headers.get("content-type") || "";
+          if (ct.indexOf("application/json") === -1) throw new Error("non-json");
+          return r.json();
+        })
         .then(function(data) {
           clearTimeout(timeout);
           if (data && typeof data === "object") {
@@ -1419,7 +1453,8 @@
       var ok = false;
       try {
         var r = await fetch(url, { signal: controller.signal });
-        if (!r.ok) throw new Error("search_failed");
+        var ct = r.headers.get("content-type") || "";
+        if (!r.ok || ct.indexOf("application/json") === -1) throw new Error("search_failed");
         data = await r.json();
         ok = true;
       } catch (e) {
