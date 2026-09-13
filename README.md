@@ -6,7 +6,7 @@ A portfolio-ready web project that brings together six AI tools in one codebase:
 2. **Little Miss Magic** — Turn a simple idea into a gentle, magical bedtime story.
 3. **Mr Kaypoh — Research Agent** — A ReAct research agent that searches the web, reads sources, and writes a cited brief.
 4. **Mr Brave — Interview-CrewAI** — A 3-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
-5. **Mr Bounce — Trip Orchestrator** — a four-agent crew that turns Google Maps pins into a checked, optimized day-by-day itinerary with swap suggestions.
+5. **Mr Bounce — Trip Orchestrator** — a 4-agent crew that turns Google Maps pins into a checked, optimized day-by-day itinerary with swap suggestions.
 6. **This or That — Weighted Decision Maker** — Weigh two options across the criteria that matter to you, with AI-backed scores and a clear verdict. (Hosted in AI Studio: https://this-or-that-gel.ai.studio)
 
 The tools share one PostgreSQL database and an OpenRouter-backed cloud LLM integration.
@@ -16,7 +16,7 @@ The tools share one PostgreSQL database and an OpenRouter-backed cloud LLM integ
 
 The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is `openrouter/free`. Mr Brave may optionally override this with `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, and `INTERVIEW_WRITER_MODEL`.
 
-Mr Kaypoh is a **ReAct research agent** (Reason + Act, after Yao et al. 2022). The browser drives the loop: each poll executes exactly one tool action — **SEARCH**, **READ**, or **FINISH** — and persists it to Postgres, keeping every serverless invocation short and giving the user a live trace. The safeguards are enforced in code, not by the model: FINISH is blocked until at least three different pages have been read, duplicate reads are refused, and a step limit is hard-enforced. Every finding must carry a source URL, and the brief separates **Pages read** from **Also found** (not opened).
+Mr Kaypoh is a **ReAct research agent**. The browser drives the loop: each poll executes exactly one tool action — **SEARCH**, **READ**, or **FINISH** — and persists it to Postgres, keeping every serverless invocation short and giving the user a live trace. The safeguards are enforced in code, not by the model: FINISH is blocked until at least three different pages have been read, duplicate reads are refused, and a step limit is hard-enforced. Every finding must carry a source URL, and the brief separates **Pages read** from **Also found** (not opened).
 
 Mr Brave: The tool was originally designed as a **CrewAI-style** three-agent workflow: **Prospector → Interview Strategist → Professional Communications Expert**. Its deployed Vercel implementation preserves that **sequential three-stage pipeline** using direct OpenRouter calls rather than importing the CrewAI package, because CrewAI’s dependency bundle exceeded Vercel Hobby’s 500 MB serverless-function limit.
 
