@@ -1,25 +1,26 @@
-# AI Playground — Five AI Tools
+# AI Playground — Six AI Tools
 
-A portfolio-ready web project that brings together five AI tools in one codebase:
+A portfolio-ready web project that brings together six AI tools in one codebase:
 
 1. **Little Miss Chatterbox** — Ask a question, get an answer, and browse the conversation history.
 2. **Little Miss Magic** — Turn a simple idea into a gentle, magical bedtime story.
-3. **Mr. Kaypoh — Research Agent** — A ReAct research agent that searches the web, reads sources, and writes a cited brief.
-4. **Mr. Brave — Interview-CrewAI** — A three-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
-5. **Mr. Bounce — Trip Orchestrator** — a four-agent crew that turns Google Maps pins into a checked, optimized day-by-day itinerary with swap suggestions.
+3. **Mr Kaypoh — Research Agent** — A ReAct research agent that searches the web, reads sources, and writes a cited brief.
+4. **Mr Brave — Interview-CrewAI** — A 3-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
+5. **Mr Bounce — Trip Orchestrator** — a four-agent crew that turns Google Maps pins into a checked, optimized day-by-day itinerary with swap suggestions.
+6. **This or That — Weighted Decision Maker** — Weigh two options across the criteria that matter to you, with AI-backed scores and a clear verdict. (Hosted in AI Studio: https://this-or-that-gel.ai.studio)
 
 The tools share one PostgreSQL database and an OpenRouter-backed cloud LLM integration.
 
 - **Local mode** — FastAPI + **Ollama** for Little Miss Chatterbox and Little Miss Magic.
-- **Cloud mode** — Vercel Python serverless functions + the **OpenRouter API** for all five web tools.
+- **Cloud mode** — Vercel Python serverless functions + the **OpenRouter API** for all six web tools.
 
-The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is `openrouter/free`. Mr. Brave may optionally override this with `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, and `INTERVIEW_WRITER_MODEL`.
+The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is `openrouter/free`. Mr Brave may optionally override this with `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, and `INTERVIEW_WRITER_MODEL`.
 
-Mr. Kaypoh is a **ReAct research agent** (Reason + Act, after Yao et al. 2022). The browser drives the loop: each poll executes exactly one tool action — **SEARCH**, **READ**, or **FINISH** — and persists it to Postgres, keeping every serverless invocation short and giving the user a live trace. The safeguards are enforced in code, not by the model: FINISH is blocked until at least three different pages have been read, duplicate reads are refused, and a step limit is hard-enforced. Every finding must carry a source URL, and the brief separates **Pages read** from **Also found** (not opened).
+Mr Kaypoh is a **ReAct research agent** (Reason + Act, after Yao et al. 2022). The browser drives the loop: each poll executes exactly one tool action — **SEARCH**, **READ**, or **FINISH** — and persists it to Postgres, keeping every serverless invocation short and giving the user a live trace. The safeguards are enforced in code, not by the model: FINISH is blocked until at least three different pages have been read, duplicate reads are refused, and a step limit is hard-enforced. Every finding must carry a source URL, and the brief separates **Pages read** from **Also found** (not opened).
 
-Mr. Brave: The tool was originally designed as a **CrewAI-style** three-agent workflow: **Prospector → Interview Strategist → Professional Communications Expert**. Its deployed Vercel implementation preserves that **sequential three-stage pipeline** using direct OpenRouter calls rather than importing the CrewAI package, because CrewAI’s dependency bundle exceeded Vercel Hobby’s 500 MB serverless-function limit.
+Mr Brave: The tool was originally designed as a **CrewAI-style** three-agent workflow: **Prospector → Interview Strategist → Professional Communications Expert**. Its deployed Vercel implementation preserves that **sequential three-stage pipeline** using direct OpenRouter calls rather than importing the CrewAI package, because CrewAI’s dependency bundle exceeded Vercel Hobby’s 500 MB serverless-function limit.
 
-Mr. Bounce is a **four-agent crew** — **Scout**, **Reasoner**, **Alternatives**, and **Compiler** — that turns Google Maps pins into a checked, optimized day-by-day itinerary. **Scout** owns pin ingestion and per-place research (opening hours are either verified or explicitly flagged — never a silent guess). **Reasoner** owns the travel matrix and the deterministic scheduler (opening-hours feasibility, neighborhood day-clustering, least-travel routing, meal/rest windows), then audits the draft and remediates graded — reorder, compress dwell, consult **Alternatives** for swaps, drop only as a last resort — with any judgment call surfacing as an advisory note. Alternatives is consult-only: a clean schedule skips it entirely. **Compiler** assembles the final itinerary with per-day Google Maps route links. Travel times and geocoding run on free keyless APIs (OSRM, Photon, Nominatim, Overpass) with paid SerpApi as fallback; the full agent/tool trace is persisted and surfaced live.
+Mr Bounce is a **four-agent crew** — **Scout**, **Reasoner**, **Alternatives**, and **Compiler** — that turns Google Maps pins into a checked, optimized day-by-day itinerary. **Scout** owns pin ingestion and per-place research (opening hours are either verified or explicitly flagged — never a silent guess). **Reasoner** owns the travel matrix and the deterministic scheduler (opening-hours feasibility, neighborhood day-clustering, least-travel routing, meal/rest windows), then audits the draft and remediates graded — reorder, compress dwell, consult **Alternatives** for swaps, drop only as a last resort — with any judgment call surfacing as an advisory note. Alternatives is consult-only: a clean schedule skips it entirely. **Compiler** assembles the final itinerary with per-day Google Maps route links. Travel times and geocoding run on free keyless APIs (OSRM, Photon, Nominatim, Overpass) with paid SerpApi as fallback; the full agent/tool trace is persisted and surfaced live.
 
 ## Architecture
 
@@ -29,9 +30,9 @@ flowchart LR
 
     L --> Q[Little Miss Chatterbox]
     L --> S[Little Miss Magic]
-    L --> R[Mr. Kaypoh<br/>Research Agent]
-    L --> I[Mr. Brave<br/>Interview-CrewAI]
-    L --> T[Mr. Bounce<br/>Trip Orchestrator]
+    L --> R[Mr Kaypoh<br/>Research Agent]
+    L --> I[Mr Brave<br/>Interview-CrewAI]
+    L --> T[Mr Bounce<br/>Trip Orchestrator]
 
     Q --> A[LLM adapter]
     S --> A
@@ -84,19 +85,19 @@ api/                       # Vercel serverless route handlers
   story.py                 # POST /api/story
   stories.py               # GET  /api/stories
   healthz.py               # GET  /api/healthz
-  research_start.py        # POST /api/research_start  (Mr. Kaypoh)
+  research_start.py        # POST /api/research_start  (Mr Kaypoh)
   research_step.py         # POST /api/research_step   (one ReAct step)
   research_status.py       # GET  /api/research_status (session + steps)
   research_eval.py         # POST /api/research_eval   (6 checks + score)
-  interview.py             # Mr. Brave consolidated handler (start/step/status/delete)
-  planner.py               # Mr. Bounce consolidated handler (start/step/status/delete)
+  interview.py             # Mr Brave consolidated handler (start/step/status/delete)
+  planner.py               # Mr Bounce consolidated handler (start/step/status/delete)
 public/                    # Static pages (plain HTML/CSS/JS)
-  index.html               # Landing page with five app cards
+  index.html               # Landing page with six app cards
   question-log.html        # Little Miss Chatterbox UI
   bedtime-story.html       # Little Miss Magic UI
-  research.html            # Mr. Kaypoh Research Agent UI (live trace)
-  interview-prep.html      # Mr. Brave Interview-CrewAI UI
-  trip-planner.html       # Mr. Bounce Trip Orchestrator UI (animated node graph)
+  research.html            # Mr Kaypoh Research Agent UI (live trace)
+  interview-prep.html      # Mr Brave Interview-CrewAI UI
+  trip-planner.html       # Mr Bounce Trip Orchestrator UI (animated node graph)
   style.css
 services/                  # Shared logic
   llm_adapter.py           # Chooses OpenRouter or Ollama at runtime
@@ -105,18 +106,18 @@ services/                  # Shared logic
   database.py              # Postgres connection pool (psycopg-pool)
   interaction_service.py   # Question Log DB ops
   story_service.py         # Bedtime Story DB ops
-  research_service.py      # Mr. Kaypoh tools (search_web, read_webpage, eval)
+  research_service.py      # Mr Kaypoh tools (search_web, read_webpage, eval)
   research_engine.py       # Pure ReAct engine (run_one_step, no HTTP imports)
-  planner_db.py            # Mr. Bounce Postgres tables + _ensure_tables
-  planner_types.py         # Mr. Bounce canonical data contracts (Pin/PlaceResearch/Leg/Schedule/Trace)
-  planner_graph.py         # Mr. Bounce graph engine + YAML loader
-  planner_ingest.py        # Mr. Bounce Ingest tool (short-link + text pins)
-  planner_logistics.py     # Mr. Bounce Logistics tool (leg cache, SerpApi directions)
-  planner_scheduler.py     # Mr. Bounce Scheduler tool (clustering + 2-opt + slotting)
-  planner_scout.py         # Mr. Bounce Scout agent (SerpApi place research)
-  planner_critic.py        # Mr. Bounce Critic agent (schedule review)
-  planner_alternatives.py  # Mr. Bounce Alternatives agent (swap proposals)
-  planner_compiler.py      # Mr. Bounce Compiler agent (final itinerary assembly)
+  planner_db.py            # Mr Bounce Postgres tables + _ensure_tables
+  planner_types.py         # Mr Bounce canonical data contracts (Pin/PlaceResearch/Leg/Schedule/Trace)
+  planner_graph.py         # Mr Bounce graph engine + YAML loader
+  planner_ingest.py        # Mr Bounce Ingest tool (short-link + text pins)
+  planner_logistics.py     # Mr Bounce Logistics tool (leg cache, SerpApi directions)
+  planner_scheduler.py     # Mr Bounce Scheduler tool (clustering + 2-opt + slotting)
+  planner_scout.py         # Mr Bounce Scout agent (SerpApi place research)
+  planner_critic.py        # Mr Bounce Critic agent (schedule review)
+  planner_alternatives.py  # Mr Bounce Alternatives agent (swap proposals)
+  planner_compiler.py      # Mr Bounce Compiler agent (final itinerary assembly)
   fixtures.py              # Saved results for USE_FIXTURES=1 fallback
   vercel_handler.py        # Base handler for Vercel serverless functions
 app/                       # Local FastAPI app (Ollama) — NOT deployed
@@ -127,13 +128,13 @@ local/
 sql/
   001_create_tables.sql    # Combined schema (interactions + stories)
   002_create_stories.sql   # Stories table (standalone)
-  003_research.sql         # Mr. Kaypoh tables (research_sessions + research_steps)
-  004_interview_prep.sql   # Mr. Brave interview tables
+  003_research.sql         # Mr Kaypoh tables (research_sessions + research_steps)
+  004_interview_prep.sql   # Mr Brave interview tables
 sql/
-  005_trip_planner.sql     # Mr. Bounce tables (planner_sessions/pins/leg_cache/trace/itinerary)
+  005_trip_planner.sql     # Mr Bounce tables (planner_sessions/pins/leg_cache/trace/itinerary)
 scripts/
   verify_setup.sh          # Local environment checks
-planner_graph.yaml         # Mr. Bounce 7-node graph definition (ships to Vercel)
+planner_graph.yaml         # Mr Bounce 7-node graph definition (ships to Vercel)
 tests/                     # Unit tests (scheduler, graph runner, etc.)
 vercel.json                # URL rewrites for Vercel
 requirements.txt
@@ -147,7 +148,7 @@ requirements.txt
 - **PostgreSQL** running locally (for local mode)
 - **Ollama** running locally with a model pulled (for local mode)
 - **OpenRouter API key** (for cloud mode)
-- **SerpApi key** (for Mr. Kaypoh's SEARCH tool)
+- **SerpApi key** (for Mr Kaypoh's SEARCH tool)
 
 ## Local mode (Ollama)
 
@@ -183,15 +184,15 @@ Open <http://localhost:8000>.
 3. Provision **Vercel Postgres** (Neon) and run the SQL migrations against it:
    - `sql/001_create_tables.sql` (interactions + stories)
    - `sql/003_research.sql` (research_sessions + research_steps)
-   - `sql/004_interview_prep.sql` (Mr. Brave interview tables)
-   - `sql/005_trip_planner.sql` (Mr. Bounce planner tables)
+   - `sql/004_interview_prep.sql` (Mr Brave interview tables)
+   - `sql/005_trip_planner.sql` (Mr Bounce planner tables)
 4. Add environment variables in Vercel (Production + Preview):
    - `OPENROUTER_API_KEY` — your OpenRouter API key
    - `OPENROUTER_MODEL` — model slug shared by all four cloud tools (default: `openrouter/free`)
-   - `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, `INTERVIEW_WRITER_MODEL` — optional Mr. Brave per-stage overrides; when unset, they inherit `OPENROUTER_MODEL`
-   - `PLANNER_SCOUT_MODEL`, `PLANNER_CRITIC_MODEL`, `PLANNER_ALTERNATIVES_MODEL`, `PLANNER_COMPILER_MODEL` — optional Mr. Bounce per-agent overrides; when unset, they inherit `OPENROUTER_MODEL`
+   - `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, `INTERVIEW_WRITER_MODEL` — optional Mr Brave per-stage overrides; when unset, they inherit `OPENROUTER_MODEL`
+   - `PLANNER_SCOUT_MODEL`, `PLANNER_CRITIC_MODEL`, `PLANNER_ALTERNATIVES_MODEL`, `PLANNER_COMPILER_MODEL` — optional Mr Bounce per-agent overrides; when unset, they inherit `OPENROUTER_MODEL`
    - `DATABASE_URL` — Vercel Postgres connection string
-   - `SERPAPI_KEY` — SerpApi key for Mr. Kaypoh's SEARCH tool
+   - `SERPAPI_KEY` — SerpApi key for Mr Kaypoh's SEARCH tool
    - `USE_FIXTURES` — set `1` to use saved results instead of live SerpApi (optional)
 5. Deploy. Vercel uses `vercel.json` rewrites and the `api/` handlers. `planner_graph.yaml` ships to Vercel alongside the Python handlers.
 
@@ -201,12 +202,12 @@ The `.vercelignore` excludes `app/`, `local/`, and `venv/` so only the serverles
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/` | Landing page (five app cards) |
+|| GET | `/` | Landing page (six app cards) |
 | GET | `/question-log` | Little Miss Chatterbox UI |
 | GET | `/bedtime-story` | Little Miss Magic UI |
-| GET | `/research` | Mr. Kaypoh Research Agent UI (live trace) |
-| GET | `/interview-prep` | Mr. Brave Interview-CrewAI UI |
-| GET | `/trip-planner` | Mr. Bounce Trip Orchestrator UI (animated node graph) |
+| GET | `/research` | Mr Kaypoh Research Agent UI (live trace) |
+| GET | `/interview-prep` | Mr Brave Interview-CrewAI UI |
+| GET | `/trip-planner` | Mr Bounce Trip Orchestrator UI (animated node graph) |
 | POST | `/api/ask` | Ask a question, get an answer |
 | GET | `/api/history` | List recent interactions |
 | POST | `/api/story` | Generate a bedtime story |
