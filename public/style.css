@@ -1,199 +1,401 @@
-/* Landing page & Chat - Modern Night Theme */
-
+/* ===== AI Playground — Apple Liquid Glass UI =====
+   Base: quiet dark surface + Apple glass tokens.
+   Landing page (body.landing) gets the FULL treatment: animated gradient,
+   floating orbs, noise overlay, hero header, staggered glass cards.
+   Tool pages inherit the base: quiet dark bg, glass panels, no orbs/gradient. */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #f5f7fa;
-  color: #1f2933;
-  line-height: 1.6;
+:root {
+  --bg-0: #0b0c10;
+  --bg-1: #14161f;
+  --glass-bg: rgba(255, 255, 255, 0.07);
+  --glass-bg-strong: rgba(255, 255, 255, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.16);
+  --glass-highlight: rgba(255, 255, 255, 0.28);
+  --text-primary: rgba(255, 255, 255, 0.94);
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+html, body {
   min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Quiet dark surface (tool pages + base) ===== */
+body {
+  position: relative;
+  overflow-x: hidden;
+  background:
+    radial-gradient(ellipse 90% 70% at 50% -10%, #1a1e2c 0%, transparent 60%),
+    linear-gradient(160deg, #0b0c10 0%, #0f1117 55%, #0e1218 100%);
+  background-attachment: fixed;
 }
 
 .container {
+  position: relative;
+  z-index: 2;
   max-width: 720px;
   margin: 0 auto;
-  padding: 2rem 1.25rem;
+  padding: 2.5rem 1.25rem 3.5rem;
 }
 
-h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
-.subtitle { color: #52606d; margin-bottom: 2rem; }
+h1 { font-size: 1.8rem; margin-bottom: 0.25rem; letter-spacing: -0.02em; }
+.subtitle { color: var(--text-secondary); margin-bottom: 2rem; }
+h2 { font-size: 1.3rem; margin: 2rem 0 0.75rem; color: var(--text-primary); }
 
-/* Landing page */
-.app-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-}
-.app-card {
-  display: block;
-  background: #fff;
-  border: 1px solid #e4e7eb;
-  border-radius: 12px;
-  padding: 1.75rem;
-  text-decoration: none;
-  color: inherit;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.app-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-}
-.app-card .icon { font-size: 2.2rem; }
-.app-card h2 { font-size: 1.25rem; margin: 0.5rem 0 0.25rem; }
-.app-card p { color: #52606d; font-size: 0.95rem; }
-
-@media (max-width: 600px) {
-  .app-grid { grid-template-columns: 1fr; }
-}
-
-/* App pages */
+/* ===== Back link ===== */
 .back-link {
   display: inline-block;
   margin-bottom: 1.5rem;
-  color: #2563eb;
+  color: #8fb3ff;
   text-decoration: none;
   font-size: 0.95rem;
+  transition: color 0.2s ease;
 }
-.back-link:hover { text-decoration: underline; }
+.back-link:hover { color: #bfd3ff; text-decoration: underline; }
 
-textarea {
+/* ===== Inputs: frosted glass ===== */
+textarea,
+.intake-form input[type="text"],
+.intake-form input[type="date"],
+.intake-form input[type="number"] {
   width: 100%;
   padding: 0.75rem;
-  border: 1px solid #cbd2d9;
-  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  color: var(--text-primary);
   font-size: 1rem;
   font-family: inherit;
-  resize: vertical;
+  transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
+}
+textarea { resize: vertical; }
+textarea::placeholder,
+.intake-form input::placeholder { color: rgba(255, 255, 255, 0.45); }
+textarea:focus,
+.intake-form input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.18);
 }
 
+/* ===== Buttons: gradient + glass shimmer, spring hover ===== */
 button {
   margin-top: 0.75rem;
   padding: 0.65rem 1.5rem;
-  background: #2563eb;
+  background: linear-gradient(135deg, #667eea 0%, #76b84d 100%);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: 14px;
   font-size: 1rem;
+  font-family: inherit;
   cursor: pointer;
+  box-shadow:
+    0 4px 14px rgba(102, 127, 234, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 0.3s var(--spring), box-shadow 0.3s ease, filter 0.3s ease;
 }
-button:hover { background: #1d4ed8; }
-button:disabled { background: #93c5fd; cursor: not-allowed; }
+button:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow:
+    0 8px 22px rgba(102, 127, 234, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  filter: brightness(1.06);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: saturate(0.5);
+}
 
-#error { color: #dc2626; margin-top: 0.75rem; }
+#error { color: #f87171; font-weight: 600; margin-top: 0.75rem; }
+
+/* ===== Answer / story output: glass panel ===== */
 #answer, #story {
   margin-top: 1.25rem;
-  padding: 1rem;
-  background: #fff;
-  border: 1px solid #e4e7eb;
-  border-radius: 8px;
+  padding: 1.25rem;
+  background: var(--glass-bg);
+  backdrop-filter: blur(28px) saturate(1.2);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 var(--glass-highlight);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-h2 { font-size: 1.3rem; margin: 2rem 0 0.75rem; }
-
+/* ===== History / stories lists: glass rows ===== */
 #history, #stories { list-style: none; }
 #history li, #stories li {
-  background: #fff;
-  border: 1px solid #e4e7eb;
-  border-radius: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
   padding: 1rem;
   margin-bottom: 0.75rem;
 }
-#history .q, #stories .p { font-weight: 600; }
-#history .a, #stories .s { margin-top: 0.35rem; white-space: pre-wrap; }
+#history .q, #stories .p { font-weight: 600; color: var(--text-primary); }
+#history .a, #stories .s { margin-top: 0.35rem; white-space: pre-wrap; color: var(--text-primary); }
 #history .meta, #stories .meta {
   margin-top: 0.5rem;
   font-size: 0.8rem;
-  color: #7b8794;
+  color: var(--text-secondary);
+}
+#history a, #stories a { color: #93c0ff; text-decoration: underline; }
+
+/* =========================================================
+   LANDING PAGE — full Apple Liquid Glass treatment
+   (body.landing only; tool pages stay on the quiet base)
+   ========================================================= */
+body.landing { background: var(--bg-0); }
+
+/* Animated gradient background */
+body.landing .bg-gradient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, #1b2a4a 0%, transparent 60%),
+    radial-gradient(ellipse 70% 60% at 85% 20%, #1d2a3a 0%, transparent 55%),
+    radial-gradient(ellipse 60% 50% at 50% 90%, #101826 0%, transparent 60%),
+    linear-gradient(160deg, #0b0c10 0%, #14161f 50%, #0e1218 100%);
+  background-size: 200% 200%;
+  animation: drift 16s ease-in-out infinite alternate;
 }
 
-/* Modern gradient background (purple to green) */
-body {
-  background: linear-gradient(135deg, #667eea 0%, #76b84d 100%);
-  color: #fff;
+@keyframes drift {
+  0%   { background-position: 0% 0%; }
+  50%  { background-position: 110% 110%; }
+  100% { background-position: 0% 110%; }
 }
 
-/* Glassmorphism cards for landing page */
-.app-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 24px; /* bigger than 12px */
+/* Floating orbs — landing only */
+body.landing .orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform, opacity;
+}
+body.landing .orb-1 {
+  width: 520px; height: 520px;
+  background: radial-gradient(circle at 35% 35%, rgba(120,160,255,0.55), rgba(70,90,180,0.15) 60%, transparent 72%);
+  top: -180px; left: -120px;
+  animation: orbA 26s ease-in-out infinite alternate;
+}
+body.landing .orb-2 {
+  width: 460px; height: 460px;
+  background: radial-gradient(circle at 60% 40%, rgba(255,170,210,0.5), rgba(200,90,140,0.12) 60%, transparent 72%);
+  bottom: -140px; right: -100px;
+  animation: orbB 30s ease-in-out infinite alternate;
+}
+body.landing .orb-3 {
+  width: 380px; height: 380px;
+  background: radial-gradient(circle at 50% 50%, rgba(150,220,200,0.45), rgba(80,150,140,0.10) 60%, transparent 72%);
+  top: 45%; left: 55%;
+  animation: orbC 28s ease-in-out infinite alternate;
+}
+body.landing .orb-4 {
+  width: 300px; height: 300px;
+  background: radial-gradient(circle at 50% 50%, rgba(255,230,180,0.4), rgba(220,170,90,0.08) 60%, transparent 72%);
+  top: 18%; left: 30%;
+  animation: orbD 24s ease-in-out infinite alternate;
 }
 
-.app-card:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15), 0 0 60px rgba(255, 255, 255, 0.2);
+@keyframes orbA {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(90px, 70px) scale(1.12); }
+}
+@keyframes orbB {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-70px, -50px) scale(1.15); }
+}
+@keyframes orbC {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(60px, -40px) scale(1.10); }
+}
+@keyframes orbD {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-40px, 30px) scale(1.08); }
 }
 
-.app-card .icon {
-  animation: float 3s ease-in-out infinite;
+/* Subtle noise texture overlay — landing only */
+body.landing::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.92  0 0 0 0 0.95  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 220px 220px;
 }
 
-/* Floating icon animation */
+/* Landing hero header */
+body.landing .container {
+  max-width: 820px;
+  padding: 4rem 1.25rem 4rem;
+  text-align: center;
+}
+body.landing .brand {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+body.landing h1 {
+  font-size: clamp(2.1rem, 5vw, 3.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+body.landing .subtitle {
+  margin-top: 0.7rem;
+  margin-bottom: 0;
+  font-size: 1.02rem;
+  font-weight: 400;
+}
+
+/* Cards grid */
+body.landing .app-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.1rem;
+  margin-top: 2.75rem;
+  text-align: left;
+}
+
+/* ===== Glass card ===== */
+body.landing .app-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 1.6rem 1.5rem 1.5rem;
+  text-decoration: none;
+  color: inherit;
+  background: var(--glass-bg);
+  backdrop-filter: blur(28px) saturate(1.2);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: 26px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 var(--glass-highlight);
+  transition:
+    transform 0.42s var(--spring),
+    box-shadow 0.42s var(--spring),
+    background 0.3s ease,
+    border-color 0.3s ease;
+  will-change: transform;
+}
+body.landing .app-card::after {
+  /* subtle top-edge light reflection (Apple-ish) */
+  content: "";
+  position: absolute;
+  top: 0; left: 24px; right: 24px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  opacity: 0.55;
+  transition: opacity 0.3s ease;
+}
+body.landing .app-card:hover {
+  transform: translateY(-8px) scale(1.015);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: var(--glass-highlight);
+  box-shadow:
+    0 22px 50px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 var(--glass-highlight);
+}
+body.landing .app-card:hover::after { opacity: 0.9; }
+
+body.landing .app-card .icon {
+  font-size: 2.0rem;
+  line-height: 1;
+  margin-bottom: 0.9rem;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.25));
+  animation: float 3.4s ease-in-out infinite;
+}
+body.landing .app-card:nth-child(2) .icon { animation-delay: 0.3s; }
+body.landing .app-card:nth-child(3) .icon { animation-delay: 0.6s; }
+body.landing .app-card:nth-child(4) .icon { animation-delay: 0.9s; }
+body.landing .app-card:nth-child(5) .icon { animation-delay: 1.2s; }
+body.landing .app-card:nth-child(6) .icon { animation-delay: 1.5s; }
+
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+  50%      { transform: translateY(-7px); }
 }
 
-/* Enhanced Chat container */
-.chat-container {
-  max-width: 640px;
-  margin: 0 auto;
+body.landing .app-card h2 {
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  margin: 0 0 0.2rem;
 }
-
-.question-box {
-  background: #fff;
-  border-radius: 24px;
-  padding: 1.5rem;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+body.landing .app-card p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  font-weight: 400;
+  flex: 1;
 }
-
-#question {
-  border: none;
-  border-radius: 16px;
-  min-height: 100px;
-}
-
-/* Gradient button with transform effects */
-button {
-  background: linear-gradient(135deg, #667eea 0%, #76b84d 100%);
-  box-shadow: 0 4px 12px rgba(102, 127, 234, 0.3);
-}
-
-button:hover:not(:disabled) {
-  transform: translateY(-2px) scale(1.02);
-}
-
-#answer, #story {
-  background: #fff;
-  border-radius: 24px;
-  white-space: pre-wrap;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-   .app-grid { grid-template-columns: 1fr; }
-   h1 { font-size: 2.25rem; }
-   .question-box { width: 100%; }
-}
-
-/* Ensure readable text on light/white cards (history, stories, answer, story output) */
-#history, #history li, #history li .q, #history li .a, #history li .meta,
-#stories, #stories li, #stories li .p, #stories li .s, #stories li .meta,
-#answer, #story, .meta-date {
-  color: #111 !important;
-}
-
-#history a, #stories a { color: #0b3d91; text-decoration: underline; }
-
-/* External (AI Studio) card link hint */
-.app-card .external {
+body.landing .app-card .external {
   display: block;
-  margin-top: 0.5rem;
-  font-size: 0.75rem;
-  color: #7b8794;
+  margin-top: 0.6rem;
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.72); /* slight readability nudge over mockup token (0.6) */
   font-style: italic;
+  letter-spacing: 0.01em;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-top: 0.6rem;
+}
+
+/* Entrance stagger (no JS) */
+body.landing .app-card { opacity: 0; animation: fadeUp 0.7s var(--spring) forwards; }
+body.landing .app-card:nth-child(1) { animation-delay: 0.05s; }
+body.landing .app-card:nth-child(2) { animation-delay: 0.12s; }
+body.landing .app-card:nth-child(3) { animation-delay: 0.19s; }
+body.landing .app-card:nth-child(4) { animation-delay: 0.26s; }
+body.landing .app-card:nth-child(5) { animation-delay: 0.33s; }
+body.landing .app-card:nth-child(6) { animation-delay: 0.40s; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  h1 { font-size: 2.25rem; }
+}
+@media (max-width: 640px) {
+  body.landing .app-grid { grid-template-columns: 1fr; gap: 1rem; }
+  body.landing .container { padding: 3rem 1rem 3rem; }
+  body.landing .app-card { padding: 1.3rem 1.2rem; }
+}
+
+/* Accessibility: disable background/orb/entrance animation */
+@media (prefers-reduced-motion: reduce) {
+  body.landing .bg-gradient,
+  body.landing .orb,
+  body.landing .app-card,
+  body.landing .app-card .icon { animation: none !important; }
+  body.landing .app-card { opacity: 1; }
 }
