@@ -1,188 +1,915 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interview Prep Crew - Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .modal-bg { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-        .star-grid { display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; }
-    </style>
-</head>
-<body class="bg-slate-100 text-slate-900">
-    <div id="app" class="min-h-screen flex flex-col">
-        <!-- Header -->
-        <header class="bg-white border-b p-6 flex justify-between items-center shadow-sm">
-            <div class="flex items-center gap-3">
-                <div class="bg-indigo-600 p-2 rounded-lg text-white font-bold">IP</div>
-                <h1 class="text-xl font-bold">AI Playground <span class="text-slate-400 font-normal ml-2">/ Interview Prep</span></h1>
-            </div>
-            <button onclick="setView('landing')" class="text-xs text-red-500 font-medium hover:underline">Clear Session</button>
-        </header>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mr Brave — Interview (CrewAI)</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/story.css">
+  <style>
+    .container { max-width: 960px; }
 
-        <!-- Main Content -->
-        <main id="main-content" class="flex-1 p-8"></main>
+    /* ---- Intake form (matches landing-page glass card) ---- */
+    .intake-form {
+      background: rgba(255,255,255,0.92);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      color: #111;
+    }
+    .intake-form label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #333;
+    }
+    .intake-form .field { margin-bottom: 1rem; }
+    .intake-form input[type="text"],
+    .intake-form textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #cbd2d9;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      color: #111;
+      background: #fff;
+    }
+    .intake-form textarea { resize: vertical; }
+    .intake-form .row { display: flex; gap: 1rem; }
+    .intake-form .row > .field { flex: 1; }
+
+    /* ---- Word-wrap for live trace and report ---- */
+    #trace, #report {
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      min-width: 0;
+    }
+
+    /* =====================================================================
+       Animated 3-agent graph — same visual language as Mr Bounce (trip-planner)
+       ===================================================================== */
+    .graph-wrap.idle-state .graph-legend { opacity: 0.45; }
+    .graph-wrap.idle-state #graph-svg { opacity: 0.75; }
+    .graph-wrap.idle-state .node-circle {
+      animation: idle-breathe 3s ease-in-out infinite;
+    }
+    @keyframes idle-breathe {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 0.95; }
+    }
+    .graph-wrap {
+      background: rgba(255,255,255,0.92);
+      border-radius: 16px;
+      padding: 1.5rem 1rem 1rem;
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+    }
+    .graph-wrap h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: #1f2933;
+    }
+    .graph-legend {
+      display: flex;
+      gap: 1.25rem;
+      font-size: 0.8rem;
+      color: #52606d;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .graph-legend .swatch {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
+    .graph-legend .swatch.agent { border-radius: 50%; background: #667eea; }
+    .graph-legend .swatch.done  { background: #16a34a; }
+    .graph-legend .swatch.fail  { background: #dc2626; }
+    .graph-legend .swatch.retry { background: #f59e0b; }
+
+    #graph-svg {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: 300px;
+    }
+
+    /* Node state transitions */
+    .node-circle {
+      transition: fill 0.4s ease, stroke 0.4s ease, stroke-width 0.4s ease, filter 0.4s ease, opacity 0.4s ease;
+    }
+    .node-circle.idle {
+      fill: #e4e7eb; stroke: #cbd2d9; stroke-width: 1.5;
+    }
+    .node-circle.active {
+      fill: #667eea; stroke: #4f46e5; stroke-width: 2.5;
+      filter: drop-shadow(0 0 10px rgba(102,126,234,0.7));
+      animation: node-pulse 1.2s ease-in-out infinite;
+    }
+    .node-circle.done {
+      fill: #16a34a; stroke: #15803d; stroke-width: 2;
+      filter: drop-shadow(0 0 6px rgba(22,163,74,0.4));
+    }
+    .node-circle.failed {
+      fill: #dc2626; stroke: #991b1b; stroke-width: 2;
+    }
+    .node-circle.retry {
+      fill: #fde68a; stroke: #f59e0b; stroke-width: 2; opacity: 0.75;
+    }
+    .node-circle.failed,
+    .node-circle.retry { /* alias safe */ }
+    @keyframes node-pulse {
+      0%, 100% { filter: drop-shadow(0 0 ​4px rgba(​102,​126,​234,​0.​4)); }
+      50%      { filter: drop-shadow(0 0 14px rgba(102,126,234,0.85)); }
+    }
+    .node-label {
+      font-size: 11px; font-weight: 600; fill: #1f2933;
+      text-anchor: middle; pointer-events: none;
+    }
+    .node-icon {
+      font-size: 16px; text-anchor: middle; pointer-events: none;
+    }
+    .stage-badge {
+      font-size: 9px; font-weight: 700; fill: #fff;
+      text-anchor: middle; pointer-events: none;
+    }
+    .stage-badge-bg { transition: opacity 0.3s ease; }
+    .stage-badge-bg.hidden { opacity: 0; }
+
+    /* Edges */
+    .edge {
+      stroke: #9ca3af; stroke-width: 2; fill: none;
+      transition: stroke 0.4s ease, stroke-width 0.4s ease;
+    }
+    .edge.active {
+      stroke: #667eea; stroke-width: 2.5;
+      stroke-dasharray: 6 4;
+      animation: edge-march 0.8s linear infinite;
+    }
+    .edge.done { stroke: #16a34a; stroke-width: 2; }
+    .edge.retry {
+      stroke: #f59e0b; stroke-width: 2;
+      stroke-dasharray: 5 3;
+      animation: edge-march 0.8s linear infinite;
+    }
+    /* Retry arc: amber dashed at rest, lit (animated) when active */
+    .edge.arc-cond {
+      stroke: #f59e0b; stroke-width: 2;
+      stroke-dasharray: 5 3;
+    }
+    @keyframes edge-march { to { stroke-dashoffset: -10; } }
+    .edge-label {
+      font-size: 9px; fill: #f59e0b; font-weight: 600;
+      text-anchor: middle; pointer-events: none;
+      paint-order: stroke; stroke: #ffffff; stroke-width: 3px;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+
+    /* ---- Trace list ---- */
+    #trace { list-style: none; padding: 0; margin-top: 1rem; }
+    .trace-row {
+      background: rgba(255,255,255,0.92); color: #111;
+      border-radius: 10px; margin-bottom: 0.6rem;
+      overflow: hidden; border: 1px solid #e4e7eb;
+    }
+    .trace-row.failed { border-color: #dc2626; border-left: 4px solid #dc2626; }
+    .trace-header {
+      padding: 0.6rem 1rem; cursor: pointer;
+      display: flex; align-items: center; gap: ​0.5rem;
+      user-select: none;
+    }
+    .trace-header .seq { font-size: 0.75rem; font-weight: 700; color: #6b7280; min-width: 2rem; }
+    .trace-header .name { font-weight: 600; font-size: 0.95rem; flex: 1; }
+    .trace-header .badge {
+      font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px;
+      background: #e4e7eb; color: #52606d;
+    }
+    .trace-header .badge.agent { background: #ddd6fe; color: #5b21b6; }
+    .trace-header .badge.round { background: #fef3c7; color: #92400e;  }
+    .trace-header .status-icon { font-size: 1rem;  }
+    .trace-header .duration { font-size: 0.75rem; color: #6b7280;  }
+    .trace-header .chevron { font-size: 0.7rem; color: #9ca3af; transition: transform 0.2s ease; }
+    .trace-row.expanded .chevron { transform: rotate(90deg); }
+    .trace-body { display: none; padding: 0 1rem 0.75rem; border-top: 1px solid #e4e7eb; }
+    .trace-row.expanded .trace-body { display: block; }
+    .trace-body .block { margin-top: 0.5rem; }
+    .trace-body .block-label {
+      font-size: 0.75rem; font-weight: 700; color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.2rem;
+    }
+    .trace-body pre {
+      background: rgba(255,255,255,0.92); color: #111;
+      border-radius: 10px; padding: 0.7rem 1rem;
+      font-size: 0.82rem; line-height: 1.55;
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+      margin: 0;
+    }
+    .trace-body .error-text { color: #dc2626; font-weight: 600; margin: 0.25rem 0; }
+
+    /* ---- Dossier / report ---- */
+    .role-card {
+      background: rgba(255,255,255,0.92);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      border-left: 4px solid #667eea;
+      color: #111;
+    }
+    .role-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+    .role-card .qa-item { margin-bottom: 0.9rem; }
+    .role-card .qa-item .q { font-weight: 600; color: #1f2933; }
+    .role-card .qa-item .meta { font-size: 0.8rem; color: #6b7280; margin: 0.15rem 0 0.3rem; }
+    .role-card .qa-item .a {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-size: 0.92rem; line-height: 1.55;
+    }
+    .role-card .qa-item .critique {
+      font-size: 0.82rem;
+      color: #92400e;
+      background: #fef3c7;
+      border-radius: 6px;
+      padding: 0.3rem 0.6rem;
+      margin-top: 0.3rem;
+    }
+    .role-card .qa-item .critique.empty { color: #9ca3af; background: #f3f4f6; }
+    .empty-state { color: #6b7280; font-size: 0.9rem; padding: 1rem 0; }
+
+    .subtitle { margin-bottom: 1.25rem; }
+    #error { color: #dc2626; font-weight: 600; margin-top: 0.75rem; }
+    #status-msg { font-size: 0.9rem; color: #fff; opacity: 0.9; margin-top: 0.5rem; }
+    .delete-btn { margin-top: 1rem; background: #dc2626; }
+    .delete-btn:hover { background: #b91c1c; }
+
+    /* Accessibility: disable pulse animations */
+    @media (prefers-reduced-motion: reduce) {
+      .node-circle.active,
+      .edge.active, .edge.retry { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <a class="back-link" href="/">&#8592; Back to AI Playground</a>
+    <h1>&#128188; Mr Brave — Interview (CrewAI)</h1>
+    <p class="subtitle">A 3-agent crew (Prospector, Researcher, Writer) that prospects roles, predicts interview questions, and drafts STAR responses.</p>
+
+    <!-- Intake form -->
+    <div class="intake-form" id="intake">
+      <div class="row">
+        <div class="field">
+          <label for="target_role">Target Role</label>
+          <input type="text" id="target_role" placeholder="e.g. Data Scientist">
+        </div>
+        <div class="field">
+          <label for="target_companies">Target Companies</label>
+          <input type="text" id="target_companies" placeholder="e.g. Acme, Globex">
+        </div>
+      </div>
+      <div class="field">
+        <label for="user_resume">Your Resume / CV</label>
+        <textarea id="user_resume" rows="6"
+                  placeholder="Paste your resume or a short summary of your background, skills, and achievements."></textarea>
+      </div>
+      <button id="start-btn">Start Agent Crew</button>
+      <button id="delete-btn" class="delete-btn" style="display:none;">Delete Session</button>
     </div>
 
-    <script>
-        async function setView(view) {
-            const main = document.getElementById('main-content');
-            if (view === 'landing') {
-                main.innerHTML = `
-                    <div class="max-w-2xl mx-auto bg-white p-8 rounded-3xl shadow-xl border border-slate-200 space-y-6">
-                        <h2 class="text-3xl font-black text-center mb-6">Interview Intelligence</h2>
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Target Companies</label>
-                                <input id="target_companies" type="text" placeholder="Google, NVIDIA, OpenAI" class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Target Role</label>
-                                <input id="target_role" type="text" placeholder="AI Product Manager" class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Your Resume / CV</label>
-                                <textarea id="user_resume" rows="4" placeholder="Paste your professional background here..." class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"></textarea>
-                            </div>
-                            <button id="start-btn" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-indigo-700 transition-all">Start Agent Crew</button>
-                        </div>
-                    </div>
-                `;
-                document.getElementById('start-btn').onclick = startCrew;
-            } else if (view === 'processing') {
-                main.innerHTML = `
-                    <div class="flex flex-col items-center justify-center h-full space-y-8">
-                        <div class="animate-spin rounded-full h-20 w-20 border-4 border-indigo-200 border-t-indigo-600"></div>
-                        <h2 class="text-2xl font-bold text-slate-700" id="status-text">Agents are synthesizing your guide...</h2>
-                        <div class="w-64 bg-slate-200 h-2 rounded-full overflow-hidden">
-                            <div id="progress-bar" class="bg-indigo-600 h-full transition-all duration-500" style="width: 0%"></div>
-                        </div>
-                    </div>
-                `;
-            } else if (view === 'dossier') {
-                main.innerHTML = `
-                    <div id="dashboard-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <!-- Company cards injected here -->
-                    </div>
-                    <div id="modal" class="hidden fixed inset-0 modal-bg flex items-center justify-center p-4 z-50">
-                        <div class="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                            <div class="p-6 border-b flex justify-between items-center bg-slate-50">
-                                <h2 id="modal-title" class="text-2xl font-black"></h2>
-                                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
-                            </div>
-                            <div id="modal-body" class="p-8 overflow-y-auto space-y-6"></div>
-                        </div>
-                    </div>
-                `;
-            }
+    <div id="error"></div>
+    <div id="status-msg"></div>
+
+    <!-- Animated 3-agent graph -->
+    <div class="graph-wrap idle-state" id="graph-wrap"
+         aria-label="3-agent crew pipeline graph: Prospector, Researcher, Writer, with a bounded retry loop on Researching">
+      <h3>Crew Pipeline</h3>
+      <div class="graph-legend">
+        <span><span class="swatch agent"></span>Agent node</span>
+        <span><span class="swatch done"></span>Done</span>
+        <span><span class="swatch fail"></span>Failed</span>
+        <span><span class="swatch retry"></span>Retry round</span>
+      </div>
+      <svg id="graph-svg" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg"
+           role="img" aria-label="3-agent crew pipeline with retry arc from Writer back to Researcher"></svg>
+    </div>
+
+    <!-- Trace list -->
+    <ol id="trace"></ol>
+
+    <!-- Interview report / dossier -->
+    <div id="report"></div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /* ---- Constants: the 3 agents of the Mr Brave interview pipeline ---- */
+    var NODES = [
+          { name: "prospector", label: "Prospector", icon: "🔍" },
+          { name: "researcher", label: "Researcher", icon: "🧠" },
+          { name: "writer",     label: "Writer",     icon: "✍️" }
+        ];
+    var NODE_W = 80;
+    var NODE_H = 44;
+    var NODE_Y  = 70;
+    var SPACING = 220;
+    var X_OFFSET = 60;
+    var ARC_DIP  = 20;       // backbone curve dip
+    var ARC_CTRL = -2;       // retry-arc control point (above the nodes)
+    var BADGE_Y = NODE_Y + NODE_H + 18;  // 118: stage labels sit below the circle
+    var SVG_NS = "http://www.w3.org/2000/svg";
+
+    var $ = function(id) { return document.getElementById(id); };
+    var sessionId = null;
+    var timer = null;
+
+    function nodeCenterX(j) { return X_OFFSET + j * SPACING + NODE_W / 2; }
+
+    /* ---- Build the SVG graph ---- */
+    function buildGraph() {
+      var svg = $("graph-svg");
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+      /* Defs for arrowhead markers */
+      var defs = document.createElementNS(SVG_NS, "defs");
+      defs.innerHTML =
+        '<marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#9ca3af"/>' +
+        '</marker>' +
+        '<marker id="ah-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#667eea"/>' +
+        '</marker>' +
+        '<marker id="ah-d" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#16a34a"/>' +
+        '</marker>' +
+        '<marker id="ah-r" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+          '<polygon points="0 0, 8 3, 0 6" fill="#f59e0b"/>' +
+        '</marker>';
+      svg.appendChild(defs);
+
+      var midY = NODE_Y + NODE_H / 2;
+      var topY = NODE_Y + NODE_H / 2 - NODE_W / 2;
+      var botY = NODE_Y + NODE_H / 2 + NODE_W / 2;
+
+      /* Backbone edges between consecutive agents (curved downward) */
+      for (var i = 0; i < NODES.length - 1; i++) {
+        var x1 = nodeCenterX(i);
+        var x2 = nodeCenterX(i + 1);
+        var cx1 = x1 + (x2 - x1) * 0.3;
+        var cx2 = x1 + (x2 - x1) * 0.7;
+        var d = "M " + x1 + " " + midY +
+                " C " + cx1 + " " + (midY + ARC_DIP) + ", " +
+                        cx2 + " " + (midY + ARC_DIP) + ", " +
+                        x2 + " " + midY;
+        var edge = document.createElementNS(SVG_NS, "path");
+        edge.setAttribute("class", "edge");
+        edge.setAttribute("id", "edge-" + i);
+        edge.setAttribute("d", d);
+        edge.setAttribute("marker-end", "url(#ah)");
+        svg.appendChild(edge);
+      }
+
+      /* Retry arc: Researcher -> Researcher (loop above the node).
+         Amber dashed at rest; lit (animated) whenever a researching round >= 1
+         appears in the trace. This is the bounded retry on quality_score. */
+      var retryEdge = document.createElementNS(SVG_NS, "path");
+      retryEdge.setAttribute("class", "edge arc-cond");
+      retryEdge.setAttribute("id", "edge-retry");
+      retryEdge.setAttribute("d",
+        "M " + nodeCenterX(1) + " " + topY +
+        " C " + nodeCenterX(1) + " " + ARC_CTRL + ", " +
+                nodeCenterX(1) + " " + ARC_CTRL + ", " +
+                nodeCenterX(1) + " " + topY);
+      retryEdge.setAttribute("marker-end", "url(#ah-r)");
+      svg.appendChild(retryEdge);
+
+      var retryLabel = document.createElementNS(SVG_NS, "text");
+      retryLabel.setAttribute("class", "edge-label");
+      retryLabel.setAttribute("id", "edge-label-retry");
+      retryLabel.setAttribute("x", nodeCenterX(1));
+      retryLabel.setAttribute("y", ARC_CTRL - 4);
+      retryLabel.textContent = "retry (bounded)";
+      svg.appendChild(retryLabel);
+
+      /* Agent nodes */
+      for (var j = 0; j < NODES.length; j++) {
+        var node = NODES[j];
+        var nx = X_OFFSET + j * SPACING;
+        var cxx = nodeCenterX(j);
+        var el = document.createElementNS(SVG_NS, "circle");
+        el.setAttribute("id", "node-" + j);
+        el.setAttribute("class", "node-circle idle");
+        el.style.animationDelay = (j * 0.35) + "s";
+        el.setAttribute("cx", cxx);
+        el.setAttribute("cy", NODE_Y + NODE_H / 2);
+        el.setAttribute("r", NODE_W / 2);
+        svg.appendChild(el);
+
+        /* Icon */
+        var iconText = document.createElementNS(SVG_NS, "text");
+        iconText.setAttribute("class", "node-icon");
+        iconText.setAttribute("x", cxx);
+        iconText.setAttribute("y", NODE_Y + NODE_H / 2 + 5);
+        iconText.textContent = node.icon;
+        svg.appendChild(iconText);
+
+        /* Label */
+        var labelText = document.createElementNS(SVG_NS, "text");
+        labelText.setAttribute("class", "node-label");
+        labelText.setAttribute("x", cxx);
+        labelText.setAttribute("y", NODE_Y + NODE_H + 18);
+        labelText.textContent = node.label;
+        svg.appendChild(labelText);
+
+        /* Stage badge (small rounded rect + text under each node) */
+        var badgeBg = document.createElementNS(SVG_NS, "rect");
+        badgeBg.setAttribute("id", "badge-bg-" + j);
+        badgeBg.setAttribute("class", "stage-badge-bg hidden");
+        badgeBg.setAttribute("x", nx + NODE_W / 2 - 16);
+        badgeBg.setAttribute("y", BADGE_Y - 9);
+        badgeBg.setAttribute("width", 32);
+        badgeBg.setAttribute("height", 14);
+        badgeBg.setAttribute("rx", 7);
+        badgeBg.setAttribute("fill", "#f59e0b");
+        svg.appendChild(badgeBg);
+
+        var badgeTx = document.createElementNS(SVG_NS, "text");
+        badgeTx.setAttribute("class", "stage-badge");
+        badgeTx.setAttribute("id", "badge-text-" + j);
+        badgeTx.setAttribute("x", nx + NODE_W / 2);
+        badgeTx.setAttribute("y", BADGE_Y + 2);
+        badgeTx.textContent = "R1";
+        badgeTx.style.opacity = "0";
+        svg.appendChild(badgeTx);
+      }
+    }
+
+    /* ---- Update graph node states from trace data ---- */
+    function updateGraph(trace, currentNode, round) {
+      var nodeStatusMap = {};
+      var nodeRoundMap  = {};
+      var researchRetry = false;
+
+      for (var i = 0; i < trace.length; i++) {
+        var t = trace[i];
+        if (!t || typeof t !== "object") continue;
+        if (t.node_type === "tool") {
+          // no tools in the interview pipeline; skip tool rows
+          continue;
+        }
+        var st = (t.status === "ok") ? "completed" : t.status;
+        nodeStatusMap[t.node_name] = st;
+        if (t.round != null) nodeRoundMap[t.node_name] = t.round;
+        if (t.node_name === "researcher" && t.round != null && t.round >= 1) researchRetry = true;
+      }
+      var cur = String(currentNode || "").toLowerCase();
+
+      for (var j = 0; j < NODES.length; j++) {
+        var node = NODES[j];
+        var el = $("node-" + j);
+        if (!el) continue;
+
+        if (node.name === cur) {
+          el.setAttribute("class", "node-circle active");
+        } else if (nodeStatusMap[node.name] === "completed") {
+          el.setAttribute("class", "node-circle done");
+        } else if (nodeStatusMap[node.name] === "failed") {
+          el.setAttribute("class", "node-circle failed");
+        } else if (nodeRoundMap[node.name] && nodeRoundMap[node.name] > 0) {
+          el.setAttribute("class", "node-circle retry");
+        } else {
+          el.setAttribute("class", "node-circle idle");
+        }
+      }
+
+      /* Backbone edges */
+      for (var e = 0; e < NODES.length - 1; e++) {
+        var edge = $("edge-" + e);
+        if (!edge) continue;
+        var toName = NODES[e + 1].name;
+        var toActive = toName === cur;
+        var toDone = nodeStatusMap[toName] === "completed";
+
+        edge.setAttribute("class", "edge");
+        if (toActive) {
+          edge.setAttribute("class", "edge active");
+          edge.setAttribute("marker-end", "url(#ah-a)");
+        } else if (toDone) {
+          edge.setAttribute("class", "edge done");
+          edge.setAttribute("marker-end", "url(#ah-d)");
+        } else {
+          edge.setAttribute("marker-end", "url(#ah)");
+        }
+      }
+
+      /* Retry arc: lit when a researching retry round exists */
+      var retryEl = $("edge-retry");
+      if (retryEl) {
+        retryEl.setAttribute("class", researchRetry ? "edge arc-cond retry" : "edge arc-cond");
+      }
+
+      /* Stage badges (small amber round pills under the nodes) */
+      for (var n = 0; n < NODES.length; n++) {
+        var badge = $("badge-bg-" + n);
+        var badgeTx = $("badge-text-" + n);
+        if (!badge || !badgeTx) continue;
+        var r = nodeRoundMap[NODES[n].name] != null
+                ? nodeRoundMap[NODES[n].name]
+                : (round || 0);
+        if (r > 0) {
+          badge.setAttribute("class", "stage-badge-bg");
+          badgeTx.style.opacity = "1";
+          badgeTx.textContent = "R" + String(r);
+        } else {
+          badge.setAttribute("class", "stage-badge-bg hidden");
+          badgeTx.style.opacity = "0";
+        }
+      }
+    }
+
+    /* ---- HTML escaping ---- */
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, function(c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function escapeJson(obj) {
+      try { return escapeHtml(JSON.stringify(obj, null, 2)); }
+      catch (e) { return escapeHtml(String(obj)); }
+    }
+
+    /* ---- Safe JSON fetch: detect Vercel SSO wall ---- */
+    function ssoWallHint() {
+      return "Preview deployments are SSO-protected by Vercel: the API answered " +
+        "with a login redirect instead of data. Open this page through the " +
+        "SSO-authenticated preview URL in the same browser (or use the " +
+        "production URL), then retry.";
+    }
+
+    async function fetchJson(input, init) {
+      var r = await fetch(input, init);
+      var ct = r.headers.get("content-type") || "";
+      if (ct.indexOf("application/json") === -1) {
+        var txt = "";
+        try { txt = (await r.text()).slice(0, 200); } catch (e) { /* ignore */ }
+        var err = new Error("sso-wall");
+        err.ssoWall = true;
+        err.status = r.status;
+        err.body = txt;
+        throw err;
+      }
+      var data = await r.json();
+      data.__ok = r.ok;
+      data.__status = r.status;
+      return data;
+    }
+
+    /* ---- Trace helpers ---- */
+    function statusIconFor(status) {
+      if (status === "ok") status = "completed";
+      return status === "completed" ? "\u2705" :
+             status === "failed"     ? "\u274C" :
+             status === "running"    ? "\u23F3" : "\u2B1C";
+    }
+
+    function roundBadgeHtml(t) {
+      return (t.round != null && t.round > 0)
+        ? '<span class="badge round">R' + escapeHtml(String(t.round)) + '</span>'
+        : "";
+    }
+
+    function blockHtml(label, value) {
+      return '<div class="block"><div class="block-label">' + label + '</div><pre>' + value + '</pre></div>';
+    }
+
+    function traceBodyHtml(t) {
+      return '<div class="trace-body">' +
+        blockHtml("Input", escapeJson(t.input_json)) +
+        blockHtml("Output", escapeJson(t.output_json)) +
+        (t.error ? '<div class="block"><div class="block-label">Error</div><div class="error-text">' + escapeHtml(t.error) + '</div></div>' : "") +
+        blockHtml("Duration", escapeHtml(String(t.duration_ms || "\u2014") + ' ms')) +
+        blockHtml("Started", escapeHtml(t.started_at || "\u2014")) +
+        blockHtml("Finished", escapeHtml(t.finished_at || "\u2014")) +
+      '</div>';
+    }
+
+    function wireExpand(row) {
+      var header = row.querySelector(".trace-header");
+      if (header) {
+        header.addEventListener("click", function() {
+          row.classList.toggle("expanded");
+        });
+      }
+    }
+
+    /* ---- Render trace list ---- */
+    function renderTrace(trace) {
+      var ol = $("trace");
+      ol.innerHTML = "";
+      if (!Array.isArray(trace)) trace = [];
+
+      var agentByKey = {};   /* "name|r<round>" -> record */
+      var agentByName = {};  /* agent name -> record of last occurrence */
+
+      function agentKey(t) {
+        return String(t.node_name) + "|r" + (t.round == null ? "" : String(t.round));
+      }
+
+      for (var i = 0; i < trace.length; i++) {
+        var t = trace[i];
+        if (!t || typeof t !== "object") continue;
+
+        var key = agentKey(t);
+        var ex = agentByKey[key];
+        if (ex) {
+          /* Same agent+round -> collapse into the existing header */
+          var header = ex.el.querySelector(".trace-header");
+          if (header) {
+            var icon = header.querySelector(".status-icon");
+            if (icon) icon.textContent = statusIconFor(t.status);
+          }
+          ex.el.classList.toggle("failed", t.status === "failed");
+          agentByName[String(t.node_name)] = ex;
+          continue;
         }
 
-        async function startCrew() {
-            const body = {
-                target_companies: document.getElementById('target_companies').value,
-                target_role: document.getElementById('target_role').value,
-                user_resume: document.getElementById('user_resume').value
-            };
+        var row = document.createElement("div");
+        row.className = "trace-row";
+        if (t.status === "failed") row.classList.add("failed");
 
-            if (!body.target_companies || !body.target_role || !body.user_resume) {
-                alert("Please fill in all fields.");
-                return;
-            }
+        var typeClass = t.node_type === "agent" ? "agent" : "tool";
+        var dur = t.duration_ms != null ? escapeHtml(String(t.duration_ms)) + " ms" : "";
 
-            setView('processing');
-            try {
-                // 1. Start Session
-                const startRes = await fetch('/api/interview?action=start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const { session_id } = await startRes.json();
+        row.innerHTML =
+          '<div class="trace-header">' +
+            '<span class="seq">#' + escapeHtml(String(t.seq || (i + 1))) + '</span>' +
+            '<span class="status-icon">' + statusIconFor(t.status) + '</span>' +
+            '<span class="name">' + escapeHtml(t.node_name) + '</span>' +
+            '<span class="badge ' + typeClass + '">' + escapeHtml(t.node_type || "") + '</span>' +
+            roundBadgeHtml(t) +
+            '<span class="duration">' + dur + '</span>' +
+            '<span class="chevron">\u25B6</span>' +
+          '</div>' +
+          traceBodyHtml(t);
+        wireExpand(row);
 
-                // 2. Execute the 3 Phased Steps
-                const steps = [
-                    { name: 'Prospecting Roles', endpoint: '/api/interview?action=step' },
-                    { name: 'Researching Questions', endpoint: '/api/interview?action=step' },
-                    { name: 'Drafting Responses', endpoint: '/api/interview?action=step' }
-                ];
+        var rec = { el: row };
+        agentByKey[key] = rec;
+        agentByName[String(t.node_name)] = rec;
+        ol.appendChild(row);
+      }
+    }
 
-                for (let i = 0; i < steps.length; i++) {
-                    document.getElementById('status-text').innerText = steps[i].name + "...";
-                    document.getElementById('progress-bar').style.width = ((i + 1) * 33.3) + '%';
+    /* ---- Render interview report / dossier ---- */
+    function renderReport(data) {
+      var out = $("report");
+      out.innerHTML = "";
 
-                    await fetch(steps[i].endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ session_id })
-                    });
-                }
+      if (!data || !Array.isArray(data.answers) || data.answers.length === 0) {
+        out.innerHTML = '<div class="empty-state">No interview guide yet. Start the crew to generate questions and STAR responses.</div>';
+        return;
+      }
 
-                               // 3. Fetch final guide and render
-                const statusRes = await fetch(`/api/interview?action=status&session_id=${session_id}`);
-                const statusData = await statusRes.json();
+      /* Group answers by role */
+      var grouped = {};
+      var order = [];
+      for (var i = 0; i < data.answers.length; i++) {
+        var a = data.answers[i];
+        var role = a.role || "Unknown role";
+        if (!grouped[role]) {
+          grouped[role] = [];
+          order.push(role);
+        }
+        grouped[role].push(a);
+      }
 
-                renderDossier(statusData.final_guide);
-                setView('dossier');
+      for (var r = 0; r < order.length; r++) {
+        var role = order[r];
+        var items = grouped[role];
+        var card = document.createElement("div");
+        card.className = "role-card";
 
-            } catch (e) {
-                console.error(e);
-                alert("An error occurred during crew execution.");
-                setView('landing');
-            }
+        var h3 = document.createElement("h3");
+        h3.textContent = role;
+        card.appendChild(h3);
+
+        for (var q = 0; q < items.length; q++) {
+          var item = items[q];
+          var qa = document.createElement("div");
+          qa.className = "qa-item";
+
+          var qEl = document.createElement("div");
+          qEl.className = "q";
+          qEl.textContent = item.question || "Untitled question";
+          qa.appendChild(qEl);
+
+          var meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = (item.type || "").toLowerCase();
+          qa.appendChild(meta);
+
+          var aEl = document.createElement("div");
+          aEl.className = "a";
+          aEl.textContent = item.answer || "";
+          qa.appendChild(aEl);
+
+          var critEl = document.createElement("div");
+          critEl.className = "critique" + (item.critique ? "" : " empty");
+          critEl.textContent = item.critique || "No critique provided.";
+          qa.appendChild(critEl);
+
+          card.appendChild(qa);
+        }
+        out.appendChild(card);
+      }
+    }
+
+    /* ---- Polling loop ---- */
+    function pollLoop() {
+      step().then(function(cont) {
+        if (cont) {
+          timer = setTimeout(pollLoop, 500);
+        } else {
+          $("start-btn").disabled = false;
+        }
+      });
+    }
+
+    async function step() {
+      try {
+        var data = await fetchJson("/api/interview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "step", session_id: sessionId })
+        });
+        if (!data.__ok) {
+          if (data.detail && data.detail.indexOf("already completed") >= 0) {
+            await fetchAndRenderStatus();
+            return false;
+          }
+          $("error").textContent = data.detail || "Step failed.";
+          return false;
         }
 
-        function renderDossier(markdown) {
-            // Extremely simple markdown-to-card parser for the prototype
-            // In production, we'd use a library like marked.js
-            const grid = document.getElementById('dashboard-grid');
-            grid.innerHTML = '';
+        if (data.status === "completed") {
+          $("status-msg").textContent = "Completed! Rendering interview guide\u2026";
+          await fetchAndRenderStatus();
+          return false;
+        }
+        if (data.status === "failed") {
+          $("error").textContent = "A stage failed: " +
+            ((data.result && data.result.error) ? data.result.error : "unknown error");
+          await fetchAndRenderStatus();
+          return false;
+        }
 
-            // Split by "### **Company Name**"
-            const sections = markdown.split(/### \*\*([^*]+)\*\*/);
+        await fetchAndRenderStatus();
+        return true;
+      } catch (e) {
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
+        return false;
+      }
+    }
 
-            // Skip the first part (intro)
-            for (let i = 1; i < sections.length; i += 2) {
-                const company = sections[i];
-                const content = sections[i+1];
+    async function fetchAndRenderStatus() {
+      try {
+        var data = await fetchJson("/api/interview?action=status&session_id=" +
+                                   encodeURIComponent(sessionId));
+        if (!data.__ok) {
+          $("error").textContent = data.detail || "Status fetch failed.";
+          return;
+        }
 
-                const card = document.createElement('div');
-                card.className = "bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all group";
-                card.innerHTML = `
-                    <div class="flex justify-between items-start mb-4">
-                        <div class="bg-indigo-100 text-indigo-700 p-2 rounded-lg font-bold text-xs uppercase tracking-tighter">Target</div>
-                        <div class="text-slate-300 group-hover:text-indigo-500 transition-colors">➔</div>
-                    </div>
-                    <h3 class="text-2xl font-black text-slate-900 mb-1">${company}</h3>
-                    <p class="text-sm text-slate-500 mb-6">AI-Generated Playbook</p>
-                    <div class="flex items-center gap-2 text-indigo-600 text-xs font-bold">View Playbook <span class="text-slate-400">➔</span></div>
-                `;
-                card.onclick = () => openModal(company, content);
-                grid.appendChild(card);
+        updateGraph(data.trace || [], data.current_node || data.stage || "", data.critic_round || data.researching_round || 0);
+        renderTrace(data.trace || []);
+
+        if (data.status === "completed") {
+          renderReport(data);
+          $("status-msg").textContent = "Interview guide ready!";
+          $("delete-btn").style.display = "";
+        } else if (data.status === "failed") {
+          $("status-msg").textContent = "Pipeline failed.";
+          $("delete-btn").style.display = "";
+        } else if (data.status === "running" || data.status === "pending") {
+          $("status-msg").textContent = "Running\u2026 (stage: " + (data.stage || "\u2014") + ")";
+        }
+      } catch (e) {
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Status fetch error: " + (e.message || e);
+      }
+    }
+
+    /* ---- Start button ---- */
+    $("start-btn").addEventListener("click", async function() {
+      var role = $("target_role").value.trim();
+      var companies = $("target_companies").value.trim();
+      var resume = $("user_resume").value.trim();
+
+      $("error").textContent = "";
+      $("status-msg").textContent = "";
+      $("trace").innerHTML = "";
+      $("report").innerHTML = "";
+
+      if (!role) { $("error").textContent = "Enter a target role."; return; }
+      if (!companies) { $("error").textContent = "Enter at least one target company."; return; }
+      if (!resume) { $("error").textContent = "Paste your resume / CV."; return; }
+
+      $("start-btn").disabled = true;
+
+      try {
+        var data = await fetchJson("/api/interview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "start",
+            target_role: role,
+            target_companies: companies,
+            user_resume: resume
+          })
+        });
+        if (!data.__ok) {
+          $("error").textContent = data.detail || "Start failed.";
+          $("start-btn").disabled = false;
+          return;
+        }
+        sessionId = data.session_id;
+        history.replaceState(null, "", "?session_id=" + encodeURIComponent(sessionId));
+        $("graph-wrap").classList.remove("idle-state");
+        buildGraph();
+        $("status-msg").textContent = "Session started. Running crew\u2026";
+        $("delete-btn").style.display = "";
+        pollLoop();
+      } catch (e) {
+        $("error").textContent = e.ssoWall ? ssoWallHint()
+          : "Network error: " + (e.message || e);
+        $("start-btn").disabled = false;
+      }
+    });
+
+    /* ---- Delete session ---- */
+    $("delete-btn").addEventListener("click", async function() {
+      if (!sessionId) return;
+      if (!confirm("Delete this interview preparation session?")) return;
+      try {
+        await fetch("/api/interview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "delete", session_id: sessionId })
+        });
+      } catch (e) { /* ignore */ }
+      sessionId = null;
+      history.replaceState(null, "", location.pathname);
+      $("graph-wrap").classList.add("idle-state");
+      buildGraph();
+      $("trace").innerHTML = "";
+      $("report").innerHTML = "";
+      $("status-msg").textContent = "";
+      $("error").textContent = "";
+      $("delete-btn").style.display = "none";
+      $("start-btn").disabled = false;
+    });
+
+    /* ---- Refresh recovery: check for ?session_id= on page load ---- */
+    (async function() {
+      var params = new URLSearchParams(location.search);
+      var sid = params.get("session_id");
+      if (sid) {
+        sessionId = sid;
+        $("graph-wrap").classList.remove("idle-state");
+        buildGraph();
+        $("delete-btn").style.display = "";
+        $("start-btn").disabled = true;
+        await fetchAndRenderStatus();
+        try {
+          var data = await fetchJson("/api/interview?action=status&session_id=" +
+                                     encodeURIComponent(sessionId));
+          if (data.__ok) {
+            if (data.status === "pending" || data.status === "running") {
+              pollLoop();
+            } else {
+              $("start-btn").disabled = false;
             }
+          } else {
+            $("start-btn").disabled = false;
+          }
+        } catch (e) {
+          if (e.ssoWall) $("error").textContent = ssoWallHint();
+          $("start-btn").disabled = false;
         }
+      }
+    })();
 
-        function openModal(company, content) {
-            document.getElementById('modal-title').innerText = company;
-            // Simple formatting for the modal
-            const formattedContent = content
-                .replace(/#### \*\*The STAR Response:\*\*/g, '<div class="font-bold text-indigo-600 mb-2">STAR Response</div>')
-                .replace(/\* \*\*Situation:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase">Situation</div>')
-                .replace(/\* \*\*Task:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Task</div>')
-                .replace(/\* \*\*Action:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Action</div>')
-                .replace(/\* \*\*Result:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Result</div>')
-                .replace(/> 💡 \*\*Critic's Note:\*\*/g, '<div class="mt-6 p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-xl text-sm italic text-amber-800"><strong>Coach:</strong>')
-                .replace(/<\/div>$/, '</div>');
-
-            document.getElementById('modal-body').innerHTML = `<div class="space-y-4 text-slate-700 leading-relaxed">${formattedContent}</div>`;
-            document.getElementById('modal').classList.remove('hidden');
-        }
-
-        function closeModal() { document.getElementById('modal').classList.add('hidden'); }
-
-        setView('landing');
-    </script>
+    /* ---- Initial graph in idle state ---- */
+    buildGraph();
+  </script>
 </body>
 </html>
