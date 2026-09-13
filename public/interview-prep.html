@@ -1,188 +1,468 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interview Prep Crew - Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .modal-bg { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-        .star-grid { display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mr Brave — Interview (CrewAI)</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/story.css">
+  <style>
+    /* ------------------------------------------------------------------
+       Mr. Brave interview page — Modern Night Theme (matches landing page)
+       ------------------------------------------------------------------ */
+
+    /* Landing-form card: white glassmorphism on the gradient, matching research.html */
+    .ip-form {
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      border-radius: 24px;
+      padding: 1.75rem;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .ip-form h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 0 0 0.25rem;
+    }
+    .ip-form .lead {
+      color: #52606d;
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .ip-field {
+      margin-bottom: 1rem;
+    }
+    .ip-field label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #52606d;
+      margin-bottom: 0.35rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .ip-field input,
+    .ip-field textarea {
+      width: 100%;
+      padding: 0.7rem 0.9rem;
+      border: 1px solid #e4e7eb;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      background: #fff;
+      color: #1f2933;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .ip-field input:focus,
+    .ip-field textarea:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .ip-field textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+    #start-btn {
+      width: 100%;
+      padding: 0.75rem;
+      margin-top: 0.85rem;
+      background: linear-gradient(135deg, #667eea 0%, #76b84d 100%);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      box-shadow: 0 4px 14px rgba(102, 127, 234, 0.3);
+    }
+    #start-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(102, 127, 234, 0.4);
+    }
+    #start-btn:disabled {
+      background: #93c5fd;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Processing view — spinner + progress on the gradient */
+    .ip-processing {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 55vh;
+      text-align: center;
+    }
+    .ip-spinner {
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(255, 255, 255, 0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: ip-spin 0.75s linear infinite;
+      margin-bottom: 1.1rem;
+    }
+    @keyframes ip-spin {
+      to { transform: rotate(360deg); }
+    }
+    #status-text {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 1rem;
+    }
+    .ip-progress-track {
+      width: 240px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(135deg, #667eea 0%, #76b84d 100%);
+      border-radius: 999px;
+      transition: width 0.4s ease;
+    }
+
+    /* Dossier — header + responsive card grid */
+    .ip-dossier-header {
+      margin-bottom: 1.25rem;
+    }
+    .ip-dossier-header h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #fff;
+      margin: 0;
+    }
+    .ip-dossier-header p {
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 0.9rem;
+      margin: 0.2rem 0 0;
+    }
+    #dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .playbook-card {
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 18px;
+      padding: 1.25rem;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      color: #1f2933;
+    }
+    .playbook-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.1);
+    }
+    .playbook-card .target-badge {
+      display: inline-block;
+      background: rgba(102, 127, 234, 0.15);
+      color: #2563eb;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.6rem;
+    }
+    .playbook-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin: 0 0 0.2rem;
+    }
+    .playbook-card .hint {
+      font-size: 0.8rem;
+      color: #52606d;
+      margin: 0 0 0.9rem;
+    }
+    .playbook-card .view-hint {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #2563eb;
+    }
+
+    /* Modal — glass overlay + white glass card, matching design system */
+    .ip-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      z-index: 50;
+    }
+    .ip-modal-overlay.hidden { display: none; }
+    .ip-modal-card {
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 22px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+      width: 100%;
+      max-width: 580px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .ip-modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.1rem 1.3rem;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      background: rgba(255, 255, 255, 0.4);
+    }
+    .ip-modal-head h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin: 0;
+    }
+    .ip-modal-close {
+      background: none;
+      border: none;
+      font-size: 1.4rem;
+      line-height: 1;
+      color: #7b8794;
+      cursor: pointer;
+      padding: 0.1rem 0.3rem;
+    }
+    .ip-modal-close:hover { color: #1f2933; }
+    .ip-modal-body {
+      padding: 1.2rem 1.3rem;
+      overflow-y: auto;
+      color: #1f2933;
+      line-height: 1.65;
+      font-size: 0.9rem;
+    }
+    .ip-modal-body .star-label {
+      font-weight: 700;
+      color: #2563eb;
+      margin: 0.65rem 0 0.15rem;
+    }
+    .ip-modal-body .star-label.sub {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #7b8794;
+      font-weight: 600;
+    }
+    .ip-modal-body .critique-box {
+      margin-top: 0.85rem;
+      padding: 0.65rem 0.85rem;
+      background: rgba(245, 158, 11, 0.08);
+      border-left: 3px solid #f59e0b;
+      border-radius: 0 6px 6px 0;
+      color: #92400e;
+      font-style: italic;
+    }
+  </style>
 </head>
-<body class="bg-slate-100 text-slate-900">
-    <div id="app" class="min-h-screen flex flex-col">
-        <!-- Header -->
-        <header class="bg-white border-b p-6 flex justify-between items-center shadow-sm">
-            <div class="flex items-center gap-3">
-                <div class="bg-indigo-600 p-2 rounded-lg text-white font-bold">IP</div>
-                <h1 class="text-xl font-bold">AI Playground <span class="text-slate-400 font-normal ml-2">/ Interview Prep</span></h1>
+<body>
+  <div class="container">
+    <a class="back-link" href="/">← Back to AI Playground</a>
+    <h1>💼 Mr Brave — Interview (CrewAI)</h1>
+    <p class="subtitle">Agentic AI that prospects roles, predicts questions, and drafts STAR responses.</p>
+    <div id="main-content"></div>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Interview Prep Crew — SPA with three views:
+    //   landing  →  processing  →  dossier (company cards + modal)
+    // All JS logic is unchanged; only the HTML templates and CSS have
+    // been restyled to match the landing page's Modern Night Theme.
+    // -----------------------------------------------------------------------
+
+    function setView(view) {
+      const main = document.getElementById('main-content');
+
+      if (view === 'landing') {
+        main.innerHTML = `
+          <div class="ip-form">
+            <h2>Interview Intelligence</h2>
+            <p class="lead">Tell Mr Brave who you're targeting and what your resume looks like — he'll prospect roles, predict likely questions, and draft STAR responses.</p>
+            <div class="ip-field">
+              <label for="target_companies">Target Companies</label>
+              <input id="target_companies" type="text" placeholder="Google, NVIDIA, OpenAI">
             </div>
-            <button onclick="setView('landing')" class="text-xs text-red-500 font-medium hover:underline">Clear Session</button>
-        </header>
+            <div class="ip-field">
+              <label for="target_role">Target Role</label>
+              <input id="target_role" type="text" placeholder="AI Product Manager">
+            </div>
+            <div class="ip-field">
+              <label for="user_resume">Your Resume / CV</label>
+              <textarea id="user_resume" rows="4" placeholder="Paste your professional background here..."></textarea>
+            </div>
+            <button id="start-btn">Start Agent Crew</button>
+          </div>
+        `;
+        document.getElementById('start-btn').onclick = startCrew;
 
-        <!-- Main Content -->
-        <main id="main-content" class="flex-1 p-8"></main>
-    </div>
+      } else if (view === 'processing') {
+        main.innerHTML = `
+          <div class="ip-processing">
+            <div class="ip-spinner"></div>
+            <h2 id="status-text">Agents are synthesizing your guide...</h2>
+            <div class="ip-progress-track">
+              <div id="progress-bar"></div>
+            </div>
+          </div>
+        `;
 
-    <script>
-        async function setView(view) {
-            const main = document.getElementById('main-content');
-            if (view === 'landing') {
-                main.innerHTML = `
-                    <div class="max-w-2xl mx-auto bg-white p-8 rounded-3xl shadow-xl border border-slate-200 space-y-6">
-                        <h2 class="text-3xl font-black text-center mb-6">Interview Intelligence</h2>
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Target Companies</label>
-                                <input id="target_companies" type="text" placeholder="Google, NVIDIA, OpenAI" class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Target Role</label>
-                                <input id="target_role" type="text" placeholder="AI Product Manager" class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-bold mb-1">Your Resume / CV</label>
-                                <textarea id="user_resume" rows="4" placeholder="Paste your professional background here..." class="w-full p-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"></textarea>
-                            </div>
-                            <button id="start-btn" class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-indigo-700 transition-all">Start Agent Crew</button>
-                        </div>
-                    </div>
-                `;
-                document.getElementById('start-btn').onclick = startCrew;
-            } else if (view === 'processing') {
-                main.innerHTML = `
-                    <div class="flex flex-col items-center justify-center h-full space-y-8">
-                        <div class="animate-spin rounded-full h-20 w-20 border-4 border-indigo-200 border-t-indigo-600"></div>
-                        <h2 class="text-2xl font-bold text-slate-700" id="status-text">Agents are synthesizing your guide...</h2>
-                        <div class="w-64 bg-slate-200 h-2 rounded-full overflow-hidden">
-                            <div id="progress-bar" class="bg-indigo-600 h-full transition-all duration-500" style="width: 0%"></div>
-                        </div>
-                    </div>
-                `;
-            } else if (view === 'dossier') {
-                main.innerHTML = `
-                    <div id="dashboard-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <!-- Company cards injected here -->
-                    </div>
-                    <div id="modal" class="hidden fixed inset-0 modal-bg flex items-center justify-center p-4 z-50">
-                        <div class="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                            <div class="p-6 border-b flex justify-between items-center bg-slate-50">
-                                <h2 id="modal-title" class="text-2xl font-black"></h2>
-                                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
-                            </div>
-                            <div id="modal-body" class="p-8 overflow-y-auto space-y-6"></div>
-                        </div>
-                    </div>
-                `;
-            }
+      } else if (view === 'dossier') {
+        main.innerHTML = `
+          <div class="ip-dossier-header">
+            <h2>Your Interview Playbooks</h2>
+            <p>Click a card to open the full STAR guide.</p>
+          </div>
+          <div id="dashboard-grid"></div>
+          <div id="modal" class="ip-modal-overlay hidden">
+            <div class="ip-modal-card">
+              <div class="ip-modal-head">
+                <h2 id="modal-title"></h2>
+                <button onclick="closeModal()" class="ip-modal-close">&times;</button>
+              </div>
+              <div id="modal-body" class="ip-modal-body"></div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Crew orchestration — three phased step calls.
+    // -----------------------------------------------------------------------
+
+    async function startCrew() {
+      const body = {
+        target_companies: document.getElementById('target_companies').value,
+        target_role: document.getElementById('target_role').value,
+        user_resume: document.getElementById('user_resume').value,
+      };
+
+      if (!body.target_companies || !body.target_role || !body.user_resume) {
+        alert('Please fill in all fields.');
+        return;
+      }
+
+      setView('processing');
+      try {
+        // 1. Start session
+        const startRes = await fetch('/api/interview?action=start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const { session_id } = await startRes.json();
+
+        // 2. Execute the 3 phased steps
+        const steps = [
+          { name: 'Prospecting Roles', endpoint: '/api/interview?action=step' },
+          { name: 'Researching Questions', endpoint: '/api/interview?action=step' },
+          { name: 'Drafting Responses', endpoint: '/api/interview?action=step' },
+        ];
+
+        for (let i = 0; i < steps.length; i++) {
+          document.getElementById('status-text').innerText = steps[i].name + '...';
+          document.getElementById('progress-bar').style.width = ((i + 1) * 33.3) + '%';
+
+          await fetch(steps[i].endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id }),
+          });
         }
 
-        async function startCrew() {
-            const body = {
-                target_companies: document.getElementById('target_companies').value,
-                target_role: document.getElementById('target_role').value,
-                user_resume: document.getElementById('user_resume').value
-            };
+        // 3. Fetch final guide and render
+        const statusRes = await fetch(`/api/interview?action=status&session_id=${session_id}`);
+        const statusData = await statusRes.json();
 
-            if (!body.target_companies || !body.target_role || !body.user_resume) {
-                alert("Please fill in all fields.");
-                return;
-            }
+        renderDossier(statusData.final_guide);
+        setView('dossier');
 
-            setView('processing');
-            try {
-                // 1. Start Session
-                const startRes = await fetch('/api/interview?action=start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const { session_id } = await startRes.json();
-
-                // 2. Execute the 3 Phased Steps
-                const steps = [
-                    { name: 'Prospecting Roles', endpoint: '/api/interview?action=step' },
-                    { name: 'Researching Questions', endpoint: '/api/interview?action=step' },
-                    { name: 'Drafting Responses', endpoint: '/api/interview?action=step' }
-                ];
-
-                for (let i = 0; i < steps.length; i++) {
-                    document.getElementById('status-text').innerText = steps[i].name + "...";
-                    document.getElementById('progress-bar').style.width = ((i + 1) * 33.3) + '%';
-
-                    await fetch(steps[i].endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ session_id })
-                    });
-                }
-
-                               // 3. Fetch final guide and render
-                const statusRes = await fetch(`/api/interview?action=status&session_id=${session_id}`);
-                const statusData = await statusRes.json();
-
-                renderDossier(statusData.final_guide);
-                setView('dossier');
-
-            } catch (e) {
-                console.error(e);
-                alert("An error occurred during crew execution.");
-                setView('landing');
-            }
-        }
-
-        function renderDossier(markdown) {
-            // Extremely simple markdown-to-card parser for the prototype
-            // In production, we'd use a library like marked.js
-            const grid = document.getElementById('dashboard-grid');
-            grid.innerHTML = '';
-
-            // Split by "### **Company Name**"
-            const sections = markdown.split(/### \*\*([^*]+)\*\*/);
-
-            // Skip the first part (intro)
-            for (let i = 1; i < sections.length; i += 2) {
-                const company = sections[i];
-                const content = sections[i+1];
-
-                const card = document.createElement('div');
-                card.className = "bg-white p-6 rounded-3xl shadow-sm border border-slate-200 cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all group";
-                card.innerHTML = `
-                    <div class="flex justify-between items-start mb-4">
-                        <div class="bg-indigo-100 text-indigo-700 p-2 rounded-lg font-bold text-xs uppercase tracking-tighter">Target</div>
-                        <div class="text-slate-300 group-hover:text-indigo-500 transition-colors">➔</div>
-                    </div>
-                    <h3 class="text-2xl font-black text-slate-900 mb-1">${company}</h3>
-                    <p class="text-sm text-slate-500 mb-6">AI-Generated Playbook</p>
-                    <div class="flex items-center gap-2 text-indigo-600 text-xs font-bold">View Playbook <span class="text-slate-400">➔</span></div>
-                `;
-                card.onclick = () => openModal(company, content);
-                grid.appendChild(card);
-            }
-        }
-
-        function openModal(company, content) {
-            document.getElementById('modal-title').innerText = company;
-            // Simple formatting for the modal
-            const formattedContent = content
-                .replace(/#### \*\*The STAR Response:\*\*/g, '<div class="font-bold text-indigo-600 mb-2">STAR Response</div>')
-                .replace(/\* \*\*Situation:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase">Situation</div>')
-                .replace(/\* \*\*Task:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Task</div>')
-                .replace(/\* \*\*Action:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Action</div>')
-                .replace(/\* \*\*Result:\*\*/g, '<div class="font-bold text-xs text-slate-400 uppercase mt-4">Result</div>')
-                .replace(/> 💡 \*\*Critic's Note:\*\*/g, '<div class="mt-6 p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-xl text-sm italic text-amber-800"><strong>Coach:</strong>')
-                .replace(/<\/div>$/, '</div>');
-
-            document.getElementById('modal-body').innerHTML = `<div class="space-y-4 text-slate-700 leading-relaxed">${formattedContent}</div>`;
-            document.getElementById('modal').classList.remove('hidden');
-        }
-
-        function closeModal() { document.getElementById('modal').classList.add('hidden'); }
-
+      } catch (e) {
+        console.error(e);
+        alert('An error occurred during crew execution.');
         setView('landing');
-    </script>
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Dossier — simple markdown-to-card parser.
+    // -----------------------------------------------------------------------
+
+    function renderDossier(markdown) {
+      const grid = document.getElementById('dashboard-grid');
+      grid.innerHTML = '';
+
+      // Split by "### **Company Name**"
+      const sections = markdown.split(/### \*\*([^*]+)\*\*/);
+
+      // Skip the first part (intro)
+      for (let i = 1; i < sections.length; i += 2) {
+        const company = sections[i];
+        const content = sections[i + 1];
+
+        const card = document.createElement('div');
+        card.className = 'playbook-card';
+        card.innerHTML = `
+          <div class="target-badge">Target</div>
+          <h3>${company}</h3>
+          <p class="hint">AI-Generated Playbook</p>
+          <div class="view-hint">View Playbook &rarr;</div>
+        `;
+        card.onclick = () => openModal(company, content);
+        grid.appendChild(card);
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Modal — simple markdown formatting for the STAR guide.
+    // -----------------------------------------------------------------------
+
+    function openModal(company, content) {
+      document.getElementById('modal-title').innerText = company;
+
+      const formattedContent = content
+        .replace(/#### \*\*The STAR Response:\*\*/g,
+                 '<div class="star-label">STAR Response</div>')
+        .replace(/\* \*\*Situation:\*\*/g,
+                 '<div class="star-label sub">Situation</div>')
+        .replace(/\* \*\*Task:\*\*/g,
+                 '<div class="star-label sub">Task</div>')
+        .replace(/\* \*\*Action:\*\*/g,
+                 '<div class="star-label sub">Action</div>')
+        .replace(/\* \*\*Result:\*\*/g,
+                 '<div class="star-label sub">Result</div>')
+        .replace(/> 💡 \*\*Critic's Note:\*\*/g,
+                 '<div class="critique-box"><strong>Coach:</strong>')
+        .replace(/<\/div>$/, '</div>');
+
+      document.getElementById('modal-body').innerHTML = formattedContent;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.add('hidden');
+    }
+
+    setView('landing');
+  </script>
 </body>
 </html>

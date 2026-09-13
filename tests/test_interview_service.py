@@ -796,7 +796,7 @@ class TestRunWriting:
 
         def mock_writer(prompt, system_prompt, schema, model):
             roles_mentioned = sorted(set(
-                line.replace("## ", "").strip()
+                line.replace("## ", "").replace("Role: ", "").strip()
                 for line in prompt.split("\n")
                 if line.startswith("Role: ")
             ))
@@ -862,6 +862,13 @@ class TestPromptContent:
                            (session_id, company_name, job_title, responsibilities, required_skills)
                            VALUES (%s, %s, %s, %s, %s)""",
                         (session_id, "Acme", "Data Scientist", "ML", "python"),
+                    )
+                    # Seed a prior question so the avoid-duplicates context has content.
+                    cur.execute(
+                        """INSERT INTO interview_prep_questions
+                           (role_id, question_text, question_type)
+                           VALUES ((SELECT role_id FROM interview_prep_roles WHERE session_id = %s), %s, %s)""",
+                        (session_id, "Previously asked SQL question", "technical"),
                     )
                 conn.commit()
             with InterviewService.get_conn() as conn:
