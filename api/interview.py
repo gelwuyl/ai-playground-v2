@@ -11,8 +11,7 @@ original paths here with an `action` query parameter:
 """
 from urllib.parse import parse_qs, urlparse
 
-from services.database import get_conn
-from services.interview_service import InterviewService, _ensure_tables
+from services.interview_service import InterviewService
 from services.vercel_handler import VercelHandler
 
 
@@ -61,10 +60,11 @@ class handler(VercelHandler):
         user_resume = (body.get("user_resume") or "").strip()
 
         if not all([target_role, target_companies, user_resume]):
-            return self.json_response({"detail": "Missing required fields: target_role, target_companies, or user_resume."}, 400)
+            return self.json_response(
+                {"detail": "Missing required fields: target_role, target_companies, or user_resume."}, 400
+            )
 
         session_id = InterviewService.start_session(target_role, target_companies, user_resume)
-
         return self.json_response({"session_id": session_id, "status": "started", "next_step": "prospecting"})
 
     def _step(self):
@@ -77,59 +77,45 @@ class handler(VercelHandler):
             return self.json_response({"detail": "Missing session_id."}, 400)
 
         try:
-            # Let the service determine the next step based on current_stage in DB
-            # This is essentially the 'tick' for the agent crew
-            _ensure_tables()
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT current_stage FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
-                    res = cur.fetchone()
-                    if not res:
-                        return self.json_response({"detail": "Session not found."}, 404)
-                    stage = res[0]
+            status = InterviewService.get_status(session_id)
+            stage = status["stage"]
+        except ValueError:
+            return self.json_response({"detail": "Session not found."}, 404)
 
-            if stage == 'prospecting':
-                result = InterviewService.run_prospecting(session_id)
-                next_stage = 'researching'
-            elif stage == 'researching':
-                result = InterviewService.run_researching(session_id)
-                next_stage = 'writing'
-            elif stage == 'writing':
-                result = InterviewService.run_writing(session_id)
-                next_stage = 'completed'
+        if stage == "prospecting":
+            result = InterviewService.run_prospecting(session_id)
+            next_stage = "researching"
+        elif stage == "researching":
+            result = InterviewService.run_researching(session_id)
+            # run_researching returns {"status": "retry", "stage": "researching", ...}
+            # when quality is below threshold and rounds remain — stage does NOT advance.
+            if result.get("status") == "retry":
+                next_stage = "researching"
             else:
-                return self.json_response({"detail": "Session already completed."}, 400)
+                next_stage = "writing"
+        elif stage == "writing":
+            result = InterviewService.run_writing(session_id)
+            next_stage = "completed"
+        else:
+            return self.json_response({"detail": "Session already completed."}, 400)
 
-            return self.json_response({
-                "status": "completed",
-                "stage": stage,
-                "next_stage": next_stage,
-                "result": result
-            })
-
-        except Exception as e:
-            return self.json_response({"detail": str(e)}, 500)
+        return self.json_response({
+            "status": result.get("status", "completed"),
+            "stage": stage,
+            "next_stage": next_stage,
+            "result": result,
+        })
 
     def _status(self):
         session_id = self._query_param("session_id")
         if not session_id:
             return self.json_response({"detail": "Missing session_id."}, 400)
 
-        _ensure_tables()
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT current_stage, final_guide FROM interview_prep_sessions WHERE session_id = %s", (session_id,))
-                res = cur.fetchone()
-                if not res:
-                    return self.json_response({"detail": "Session not found."}, 404)
-
-                stage, guide = res
-
-        return self.json_response({
-            "stage": stage,
-            "final_guide": guide,
-            "is_completed": stage == 'completed'
-        })
+        try:
+            status = InterviewService.get_status(session_id)
+            return self.json_response(status)
+        except ValueError as e:
+            return self.json_response({"detail": str(e)}, 404)
 
     def _delete(self):
         body = self._body()
