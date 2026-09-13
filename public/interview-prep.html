@@ -9,32 +9,38 @@
   <style>
     .container { max-width: 960px; }
 
-    /* ---- Intake form (matches landing-page glass card) ---- */
+    /* ---- Intake form (Apple glass panel) ---- */
     .intake-form {
-      background: rgba(255,255,255,0.92);
-      border-radius: 16px;
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(28px) saturate(1.2);
+      -webkit-backdrop-filter: blur(28px) saturate(1.2);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 22px;
       padding: 1.5rem;
       margin-bottom: 1.5rem;
-      color: #111;
+      color: rgba(255,255,255,0.94);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.2);
     }
     .intake-form label {
       display: block;
       font-size: 0.85rem;
       font-weight: 600;
       margin-bottom: 0.25rem;
-      color: #333;
+      color: rgba(255,255,255,0.7);
     }
     .intake-form .field { margin-bottom: 1rem; }
     .intake-form input[type="text"],
     .intake-form textarea {
       width: 100%;
       padding: 0.6rem 0.75rem;
-      border: 1px solid #cbd2d9;
-      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 12px;
       font-size: 0.95rem;
       font-family: inherit;
-      color: #111;
-      background: #fff;
+      color: rgba(255,255,255,0.94);
+      background: rgba(255,255,255,0.09);
+      backdrop-filter: blur(16px) saturate(1.2);
+      -webkit-backdrop-filter: blur(16px) saturate(1.2);
     }
     .intake-form textarea { resize: vertical; }
     .intake-form .row { display: flex; gap: 1rem; }
@@ -60,23 +66,27 @@
       50%      { opacity: 0.95; }
     }
     .graph-wrap {
-      background: rgba(255,255,255,0.92);
-      border-radius: 16px;
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(28px) saturate(1.2);
+      -webkit-backdrop-filter: blur(28px) saturate(1.2);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 20px;
       padding: 1.5rem 1rem 1rem;
       margin-bottom: 1.5rem;
       overflow-x: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.2);
     }
     .graph-wrap h3 {
       font-size: 1.1rem;
       font-weight: 700;
       margin-bottom: 0.5rem;
-      color: #1f2933;
+      color: rgba(255,255,255,0.94);
     }
     .graph-legend {
       display: flex;
       gap: 1.25rem;
       font-size: 0.8rem;
-      color: #52606d;
+      color: rgba(255,255,255,0.6);
       margin-bottom: 0.75rem;
       flex-wrap: wrap;
     }
@@ -125,11 +135,12 @@
     .node-circle.failed,
     .node-circle.retry { /* alias safe */ }
     @keyframes node-pulse {
-      0%, 100% { filter: drop-shadow(0 0 ​4px rgba(​102,​126,​234,​0.​4)); }
+      0%, 100% { filter: drop-shadow(0 0 4px rgba(102,126,234,0.4)); }
       50%      { filter: drop-shadow(0 0 14px rgba(102,126,234,0.85)); }
     }
+    /* Labels sit on dark glass now: light fill for readability (CSS-only, no class renames) */
     .node-label {
-      font-size: 11px; font-weight: 600; fill: #1f2933;
+      font-size: 11px; font-weight: 600; fill: rgba(255,255,255,0.9);
       text-anchor: middle; pointer-events: none;
     }
     .node-icon {
@@ -167,83 +178,96 @@
     .edge-label {
       font-size: 9px; fill: #f59e0b; font-weight: 600;
       text-anchor: middle; pointer-events: none;
-      paint-order: stroke; stroke: #ffffff; stroke-width: 3px;
+      /* dark halo knocks the arc out behind the glyphs on dark glass */
+      paint-order: stroke; stroke: #0f1117; stroke-width: 3px;
       stroke-linecap: round; stroke-linejoin: round;
     }
 
     /* ---- Trace list ---- */
     #trace { list-style: none; padding: 0; margin-top: 1rem; }
     .trace-row {
-      background: rgba(255,255,255,0.92); color: #111;
-      border-radius: 10px; margin-bottom: 0.6rem;
-      overflow: hidden; border: 1px solid #e4e7eb;
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(24px) saturate(1.2);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.92);
+      border-radius: 14px; margin-bottom: 0.6rem;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.14);
     }
     .trace-row.failed { border-color: #dc2626; border-left: 4px solid #dc2626; }
     .trace-header {
       padding: 0.6rem 1rem; cursor: pointer;
-      display: flex; align-items: center; gap: ​0.5rem;
+      display: flex; align-items: center; gap: 0.5rem;
       user-select: none;
     }
-    .trace-header .seq { font-size: 0.75rem; font-weight: 700; color: #6b7280; min-width: 2rem; }
-    .trace-header .name { font-weight: 600; font-size: 0.95rem; flex: 1; }
+    .trace-header .seq { font-size: 0.75rem; font-weight: 700; color: rgba(255,255,255,0.55); min-width: 2rem; }
+    .trace-header .name { font-weight: 600; font-size: 0.95rem; flex: 1; color: rgba(255,255,255,0.92); }
     .trace-header .badge {
       font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px;
-      background: #e4e7eb; color: #52606d;
+      background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.7);
     }
     .trace-header .badge.agent { background: #ddd6fe; color: #5b21b6; }
     .trace-header .badge.round { background: #fef3c7; color: #92400e;  }
     .trace-header .status-icon { font-size: 1rem;  }
-    .trace-header .duration { font-size: 0.75rem; color: #6b7280;  }
-    .trace-header .chevron { font-size: 0.7rem; color: #9ca3af; transition: transform 0.2s ease; }
+    .trace-header .duration { font-size: 0.75rem; color: rgba(255,255,255,0.55);  }
+    .trace-header .chevron { font-size: 0.7rem; color: rgba(255,255,255,0.55); transition: transform 0.2s ease; }
     .trace-row.expanded .chevron { transform: rotate(90deg); }
-    .trace-body { display: none; padding: 0 1rem 0.75rem; border-top: 1px solid #e4e7eb; }
+    .trace-body { display: none; padding: 0 1rem 0.75rem; border-top: 1px solid rgba(255,255,255,0.1); }
     .trace-row.expanded .trace-body { display: block; }
     .trace-body .block { margin-top: 0.5rem; }
     .trace-body .block-label {
-      font-size: 0.75rem; font-weight: 700; color: #6b7280;
+      font-size: 0.75rem; font-weight: 700; color: rgba(255,255,255,0.55);
       text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.2rem;
     }
     .trace-body pre {
-      background: rgba(255,255,255,0.92); color: #111;
+      background: rgba(0,0,0,0.25); color: rgba(255,255,255,0.92);
+      border: 1px solid rgba(255,255,255,0.08);
       border-radius: 10px; padding: 0.7rem 1rem;
       font-size: 0.82rem; line-height: 1.55;
       white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
       margin: 0;
     }
-    .trace-body .error-text { color: #dc2626; font-weight: 600; margin: 0.25rem 0; }
+    .trace-body .error-text { color: #f87171; font-weight: 600; margin: 0.25rem 0; }
 
     /* ---- Dossier / report ---- */
     .role-card {
-      background: rgba(255,255,255,0.92);
-      border-radius: 12px;
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(28px) saturate(1.2);
+      -webkit-backdrop-filter: blur(28px) saturate(1.2);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 18px;
       padding: 1rem 1.25rem;
       margin-bottom: 1rem;
       border-left: 4px solid #667eea;
-      color: #111;
+      color: rgba(255,255,255,0.94);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.16);
     }
-    .role-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+    .role-card h3 { margin: 0 0 0.5rem; font-size: 1rem; color: rgba(255,255,255,0.94); }
     .role-card .qa-item { margin-bottom: 0.9rem; }
-    .role-card .qa-item .q { font-weight: 600; color: #1f2933; }
-    .role-card .qa-item .meta { font-size: 0.8rem; color: #6b7280; margin: 0.15rem 0 0.3rem; }
+    .role-card .qa-item .q { font-weight: 600; color: rgba(255,255,255,0.9); }
+    .role-card .qa-item .meta { font-size: 0.8rem; color: rgba(255,255,255,0.55); margin: 0.15rem 0 0.3rem; }
     .role-card .qa-item .a {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       word-break: break-word;
       font-size: 0.92rem; line-height: 1.55;
+      color: rgba(255,255,255,0.85);
     }
     .role-card .qa-item .critique {
       font-size: 0.82rem;
-      color: #92400e;
-      background: #fef3c7;
-      border-radius: 6px;
+      color: #fde68a;
+      background: rgba(253,230,138,0.16);
+      border: 1px solid rgba(253,230,138,0.25);
+      border-radius: 8px;
       padding: 0.3rem 0.6rem;
       margin-top: 0.3rem;
     }
-    .role-card .qa-item .critique.empty { color: #9ca3af; background: #f3f4f6; }
-    .empty-state { color: #6b7280; font-size: 0.9rem; padding: 1rem 0; }
+    .role-card .qa-item .critique.empty { color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.06); border-color: transparent; }
+    .empty-state { color: rgba(255,255,255,0.55); font-size: 0.9rem; padding: 1rem 0; }
 
     .subtitle { margin-bottom: 1.25rem; }
-    #error { color: #dc2626; font-weight: 600; margin-top: 0.75rem; }
+    #error { color: #f87171; font-weight: 600; margin-top: 0.75rem; }
     #status-msg { font-size: 0.9rem; color: #fff; opacity: 0.9; margin-top: 0.5rem; }
     .delete-btn { margin-top: 1rem; background: #dc2626; }
     .delete-btn:hover { background: #b91c1c; }

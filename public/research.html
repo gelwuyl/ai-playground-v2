@@ -8,54 +8,63 @@
   <link rel="stylesheet" href="/story.css">
   <style>
     /* Word-wrap for the live trace, report, and eval — fit any screen width */
-    #trace, #report, #eval, #progress {
-      word-break: break-word;
-      overflow-wrap: anywhere;
-      min-width: 0;
-    }
-    #trace li {
-      background: rgba(255, 255, 255, 0.9);
-      color: #111;
-      border-radius: 12px;
-      padding: 0.9rem 1rem;
-      margin-bottom: 0.75rem;
-      list-style: none;
-    }
-    #trace li .q,
-    #trace li .a,
-    #trace li .meta {
-      white-space: pre-wrap;      /* keep newlines AND wrap long lines */
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-    #trace li .q { font-weight: 600; }
-    #trace li .a { margin-top: 0.3rem; }
-    #trace li .meta {
-      margin-top: 0.35rem;
-      font-size: 0.85rem;
-      color: #52606d;
-    }
-    #report pre {
-      white-space: pre-wrap;      /* wrap long URLs/text instead of horizontal scroll */
-      overflow-wrap: anywhere;
-      word-break: break-word;
-      background: rgba(255, 255, 255, 0.9);
-      color: #111;
-      border-radius: 12px;
-      padding: 1rem;
-      line-height: 1.6;
-    }
-    #report h2, #eval h2 { margin: 1.25rem 0 0.5rem; }
-    #eval ul { list-style: none; padding-left: 0; }
-    #eval li {
-      background: rgba(255, 255, 255, 0.9);
-      color: #111;
-      border-radius: 8px;
-      padding: 0.4rem 0.75rem;
-      margin-bottom: 0.35rem;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
+        #trace, #report, #eval, #progress {
+          word-break: break-word;
+          overflow-wrap: anywhere;
+          min-width: 0;
+        }
+        #trace li {
+          background: rgba(255, 255, 255, 0.09);
+          backdrop-filter: blur(20px) saturate(1.2);
+          -webkit-backdrop-filter: blur(20px) saturate(1.2);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          color: rgba(255, 255, 255, 0.92);
+          border-radius: 16px;
+          padding: 0.9rem 1rem;
+          margin-bottom: 0.75rem;
+          list-style: none;
+        }
+        #trace li .q,
+        #trace li .a,
+        #trace li .meta {
+          white-space: pre-wrap;      /* keep newlines AND wrap long lines */
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+        #trace li .q { font-weight: 600; }
+        #trace li .a { margin-top: 0.3rem; }
+        #trace li .meta {
+          margin-top: 0.35rem;
+          font-size: 0.85rem;
+          color: rgba(255, 255, 255, 0.55);
+        }
+        #report pre {
+          white-space: pre-wrap;      /* wrap long URLs/text instead of horizontal scroll */
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          background: rgba(255, 255, 255, 0.09);
+          backdrop-filter: blur(20px) saturate(1.2);
+          -webkit-backdrop-filter: blur(20px) saturate(1.2);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          color: rgba(255, 255, 255, 0.92);
+          border-radius: 16px;
+          padding: 1rem;
+          line-height: 1.6;
+        }
+        #report h2, #eval h2 { margin: 1.25rem 0 0.5rem; }
+        #eval ul { list-style: none; padding-left: 0; }
+        #eval li {
+          background: rgba(255, 255, 255, 0.09);
+          backdrop-filter: blur(16px) saturate(1.2);
+          -webkit-backdrop-filter: blur(16px) saturate(1.2);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          color: rgba(255, 255, 255, 0.92);
+          border-radius: 10px;
+          padding: 0.4rem 0.75rem;
+          margin-bottom: 0.35rem;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
     #eval li.pass { border-left: 4px solid #16a34a; }
     #eval li.fail { border-left: 4px solid #dc2626; }
   </style>
