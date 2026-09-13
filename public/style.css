@@ -188,3 +188,12 @@ button:hover:not(:disabled) {
 }
 
 #history a, #stories a { color: #0b3d91; text-decoration: underline; }
+
+/* External (AI Studio) card link hint */
+.app-card .external {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #7b8794;
+  font-style: italic;
+}
