@@ -22,7 +22,11 @@ The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is
 
 - **Mr Bounce — Trip Orchestrator** — a 4-agent crew (**Scout, Reasoner, Alternatives, Compiler**) that turns Google Maps pins into a checked, optimized itinerary. Scout researches pins (hours verified or explicitly flagged); Reasoner builds the travel matrix and the deterministic schedule (hours-feasibility, day-clustering, least-travel, meals), then remediates graded — reorder, compress dwell, consult Alternatives, drop only last — surfacing each call as an advisory note; Alternatives is consult-only. Compiler emits the daily itinerary with per-day Maps route links. Travel and geocoding run on free keyless APIs (OSRM, Photon, Nominatim, Overpass) with SerpApi fallback; the full trace is persisted and surfaced live.
 
-**This or That — Weighted Decision Maker** — weighs two options across the criteria you choose, scoring them with AI and giving a clear verdict. It runs as a separate app in **AI Studio** (https://this-or-that-gel.ai.studio) and is linked out from the landing page, sharing none of this codebase's backend.
+## UI — Apple Liquid Glass
+
+- Landing page: dark animated gradient, four floating orbs, subtle noise overlay, and frosted glass cards (blur 28px, rgba 0.07 fill, thin white-tinted border, spring hover lift, staggered fade-up entrance).
+- Tool pages: same glass-card look on a quieter dark surface — no orbs or animated gradient.
+- Plain HTML/CSS/JS — static stylesheets, no framework, no Tailwind.
 
 ## Architecture
 
