@@ -5,7 +5,7 @@ A portfolio-ready web project that brings together six AI tools in one codebase:
 1. **Little Miss Chatterbox** — Ask a question, get an answer, and browse the conversation history.
 2. **Little Miss Magic** — Turn a simple idea into a gentle, magical bedtime story.
 3. **Mr Kaypoh — Research Agent** — A ReAct research agent that searches the web, reads sources, and writes a cited brief.
-4. **Mr Brave — Interview-CrewAI** — A 3-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
+4. **Mr Brave — Interview (CrewAI)** — A 3-stage interview-preparation crew that prospects target roles, predicts likely interview questions, and drafts STAR responses with coaching notes.
 5. **Mr Bounce — Trip Orchestrator** — a 4-agent crew that turns Google Maps pins into a checked, optimized day-by-day itinerary with swap suggestions.
 6. **This or That — Weighted Decision Maker** — Weigh two options across the criteria that matter to you, with AI-backed scores and a clear verdict. (Hosted in AI Studio: https://this-or-that-gel.ai.studio)
 
@@ -16,11 +16,13 @@ The tools share one PostgreSQL database and an OpenRouter-backed cloud LLM integ
 
 The shared OpenRouter model setting is `OPENROUTER_MODEL`, whose code default is `openrouter/free`. Mr Brave may optionally override this with `INTERVIEW_PROSPECTOR_MODEL`, `INTERVIEW_RESEARCHER_MODEL`, and `INTERVIEW_WRITER_MODEL`.
 
-Mr Kaypoh is a **ReAct research agent**. The browser drives the loop: each poll executes exactly one tool action — **SEARCH**, **READ**, or **FINISH** — and persists it to Postgres, keeping every serverless invocation short and giving the user a live trace. The safeguards are enforced in code, not by the model: FINISH is blocked until at least three different pages have been read, duplicate reads are refused, and a step limit is hard-enforced. Every finding must carry a source URL, and the brief separates **Pages read** from **Also found** (not opened).
+- **Mr Kaypoh — Research Agent** — a ReAct agent that runs one tool action per poll (**SEARCH / READ / FINISH**): short serverless calls, a live trace, and code-enforced safeguards (≥3 pages read before FINISH, duplicate-read refusal, hard step limit). Every finding carries a source URL; the brief separates **Pages read** from **Also found**.
 
-Mr Brave: The tool was originally designed as a **CrewAI-style** three-agent workflow: **Prospector → Interview Strategist → Professional Communications Expert**. Its deployed Vercel implementation preserves that **sequential three-stage pipeline** using direct OpenRouter calls rather than importing the CrewAI package, because CrewAI’s dependency bundle exceeded Vercel Hobby’s 500 MB serverless-function limit.
+- **Mr Brave — Interview (CrewAI)** — a sequential three-stage interview-prep pipeline (**Prospector → Interview Strategist → Professional Communications Expert**) that prospects roles, predicts likely questions, and drafts STAR answers with coaching notes. It calls OpenRouter directly rather than the CrewAI package, whose bundle exceeded Vercel Hobby's 500 MB serverless-function limit.
 
-Mr Bounce is a **four-agent crew** — **Scout**, **Reasoner**, **Alternatives**, and **Compiler** — that turns Google Maps pins into a checked, optimized day-by-day itinerary. **Scout** owns pin ingestion and per-place research (opening hours are either verified or explicitly flagged — never a silent guess). **Reasoner** owns the travel matrix and the deterministic scheduler (opening-hours feasibility, neighborhood day-clustering, least-travel routing, meal/rest windows), then audits the draft and remediates graded — reorder, compress dwell, consult **Alternatives** for swaps, drop only as a last resort — with any judgment call surfacing as an advisory note. Alternatives is consult-only: a clean schedule skips it entirely. **Compiler** assembles the final itinerary with per-day Google Maps route links. Travel times and geocoding run on free keyless APIs (OSRM, Photon, Nominatim, Overpass) with paid SerpApi as fallback; the full agent/tool trace is persisted and surfaced live.
+- **Mr Bounce — Trip Orchestrator** — a 4-agent crew (**Scout, Reasoner, Alternatives, Compiler**) that turns Google Maps pins into a checked, optimized itinerary. Scout researches pins (hours verified or explicitly flagged); Reasoner builds the travel matrix and the deterministic schedule (hours-feasibility, day-clustering, least-travel, meals), then remediates graded — reorder, compress dwell, consult Alternatives, drop only last — surfacing each call as an advisory note; Alternatives is consult-only. Compiler emits the daily itinerary with per-day Maps route links. Travel and geocoding run on free keyless APIs (OSRM, Photon, Nominatim, Overpass) with SerpApi fallback; the full trace is persisted and surfaced live.
+
+**This or That — Weighted Decision Maker** — weighs two options across the criteria you choose, scoring them with AI and giving a clear verdict. It runs as a separate app in **AI Studio** (https://this-or-that-gel.ai.studio) and is linked out from the landing page, sharing none of this codebase's backend.
 
 ## Architecture
 
@@ -31,7 +33,7 @@ flowchart LR
     L --> Q[Little Miss Chatterbox]
     L --> S[Little Miss Magic]
     L --> R[Mr Kaypoh<br/>Research Agent]
-    L --> I[Mr Brave<br/>Interview-CrewAI]
+    L --> I[Mr Brave<br/>Interview (CrewAI)]
     L --> T[Mr Bounce<br/>Trip Orchestrator]
 
     Q --> A[LLM adapter]
@@ -96,7 +98,7 @@ public/                    # Static pages (plain HTML/CSS/JS)
   question-log.html        # Little Miss Chatterbox UI
   bedtime-story.html       # Little Miss Magic UI
   research.html            # Mr Kaypoh Research Agent UI (live trace)
-  interview-prep.html      # Mr Brave Interview-CrewAI UI
+  interview-prep.html      # Mr Brave Interview (CrewAI) UI
   trip-planner.html       # Mr Bounce Trip Orchestrator UI (animated node graph)
   style.css
 services/                  # Shared logic
@@ -206,7 +208,7 @@ The `.vercelignore` excludes `app/`, `local/`, and `venv/` so only the serverles
 | GET | `/question-log` | Little Miss Chatterbox UI |
 | GET | `/bedtime-story` | Little Miss Magic UI |
 | GET | `/research` | Mr Kaypoh Research Agent UI (live trace) |
-| GET | `/interview-prep` | Mr Brave Interview-CrewAI UI |
+| GET | `/interview-prep` | Mr Brave Interview (CrewAI) UI |
 | GET | `/trip-planner` | Mr Bounce Trip Orchestrator UI (animated node graph) |
 | POST | `/api/ask` | Ask a question, get an answer |
 | GET | `/api/history` | List recent interactions |
