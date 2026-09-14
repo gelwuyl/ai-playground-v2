@@ -33,7 +33,7 @@ flowchart LR
     L --> Q[Little Miss Chatterbox]
     L --> S[Little Miss Magic]
     L --> R[Mr Kaypoh<br/>Research Agent]
-    L --> I[Mr Brave<br/>Interview (CrewAI)]
+    L --> I["Mr Brave<br/>Interview (CrewAI)"]
     L --> T[Mr Bounce<br/>Trip Orchestrator]
 
     Q --> A[LLM adapter]
