@@ -13,7 +13,9 @@ venv/
 
 # OS
 .DS_Store
+.worktree/
 .worktree-*/
+.worktrees/
 .vercel
 .env*
 
