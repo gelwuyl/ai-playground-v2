@@ -37,11 +37,28 @@
       }
       list.innerHTML = items.map(it =>
         `<li>
-           <div class="q">${escapeHtml(it.question)}</div>
+           <div class="card-header">
+             <div class="q">${escapeHtml(it.question)}</div>
+             <button class="item-delete-btn" onclick="deleteHistoryItem(${it.id})" title="Delete" aria-label="Delete">🗑️</button>
+           </div>
            <div class="a">${escapeHtml(it.answer)}</div>
            <div class="meta">${escapeHtml(it.model_name)} · ${escapeHtml(it.created_at)}</div>
          </li>`
       ).join("");
+    }
+
+    async function deleteHistoryItem(id) {
+      if (!window.confirm("Delete this interaction?")) return;
+      try {
+        const r = await fetch(`/api/history?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!r.ok) {
+          const data = await r.json();
+          throw new Error(data.detail || "Failed to delete");
+        }
+        await loadHistory();
+      } catch (e) {
+        alert(e.message);
+      }
     }
 
     async function loadHistory() {

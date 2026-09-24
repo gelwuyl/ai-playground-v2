@@ -30,3 +30,12 @@ def fetch_recent_stories(limit: int = 10) -> list[dict]:
                 (limit,),
             )
             return cur.fetchall()
+
+
+def delete_story(story_id: int) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM stories WHERE id = %s", (story_id,))
+            deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted
