@@ -30,3 +30,12 @@ def fetch_recent_history(limit: int = 10) -> list[dict]:
                 (limit,),
             )
             return cur.fetchall()
+
+
+def delete_interaction(interaction_id: int) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM interactions WHERE id = %s", (interaction_id,))
+            deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted

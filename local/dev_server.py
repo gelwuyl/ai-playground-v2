@@ -31,8 +31,9 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(PUBLIC), **kwargs)
 
     def _handle_api(self, path: str):
-        # Map /api/ask -> api/ask.py, /api/history -> api/history.py, etc.
-        name = path.split("/")[-1]
+        # Map /api/ask -> api/ask.py, /api/history?id=... -> api/history.py, etc.
+        clean_path = path.split("?", 1)[0]
+        name = clean_path.split("/")[-1]
         module_name = f"api.{name}"
         try:
             module = importlib.import_module(module_name)
@@ -82,6 +83,13 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.path.startswith("/api/"):
+            self._handle_api(self.path)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_DELETE(self):
         if self.path.startswith("/api/"):
             self._handle_api(self.path)
         else:
